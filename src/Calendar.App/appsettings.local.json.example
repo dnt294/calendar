@@ -1,0 +1,4 @@
+{
+  "Google": { "ClientId": "xxx.apps.googleusercontent.com", "ClientSecret": "xxx" },
+  "Microsoft": { "ClientId": "00000000-0000-0000-0000-000000000000" }
+}

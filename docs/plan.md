@@ -11,17 +11,17 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 1 — Khung solution (~1 buổi)
 
-- [ ] **1.1** Tạo solution theo [architecture.md](architecture.md): Core, Providers.Google, Providers.Microsoft, App (WinUI 3 Blank App, Packaged), 2 project test. Build xanh, App chạy ra cửa sổ trống.
-- [ ] **1.2** Core models + `ICalendarProvider` + `SyncResult`, `DateRange`, `EventDraft`.
-- [ ] **1.3** `SqliteCalendarStore`: schema accounts / calendars / events / sync_state; test round-trip.
+- [x] **1.1** Tạo solution theo [architecture.md](architecture.md): Core, Providers.Google, Providers.Microsoft, App (WinUI 3 Blank App, Packaged), 2 project test. Build xanh, App chạy ra cửa sổ trống.
+- [x] **1.2** Core models + `ICalendarProvider` + `SyncResult`, `DateRange`, `EventDraft`.
+- [x] **1.3** `SqliteCalendarStore`: schema accounts / calendars / events / sync_state; test round-trip.
 - [ ] **1.4** CI GitHub Actions (windows-latest): build + test. (Free cho repo public; private có quota free hằng tháng.)
 
 ## Phase 2 — Lát dọc đầu tiên: 1 Google account, xem tuần (~2–3 buổi)
 
 - [ ] **2.1** Google provider: sign-in (token DPAPI), `GetCalendarsAsync`, `SyncEventsAsync` full sync (`singleEvents=true`).
-- [ ] **2.2** `DayLayout`: xếp cột event chồng giờ — **viết test trước** (chồng 2, 3, lồng nhau, liền kề không chồng).
-- [ ] **2.3** `WeekGrid` control: trục giờ, 7 cột, dải cả ngày, đường giờ hiện tại, cuộn tới 8:00.
-- [ ] **2.4** Shell: title bar Mica, header (Today, ‹ ›, nhãn ngày), nút thêm tài khoản.
+- [x] **2.2** `DayLayout`: xếp cột event chồng giờ — **viết test trước** (chồng 2, 3, lồng nhau, liền kề không chồng).
+- [x] **2.3** `WeekGrid` control: trục giờ, 7 cột, dải cả ngày, đường giờ hiện tại, cuộn tới 8:00.
+- [x] **2.4** Shell: title bar Mica, header (Today, ‹ ›, nhãn ngày), nút thêm tài khoản.
   - Xong khi: login Gmail → thấy đúng lịch tuần này, chuyển tuần được.
 
 ## Phase 3 — Đa tài khoản + Microsoft (~2 buổi)

@@ -44,7 +44,14 @@ public interface ICalendarProvider
 }
 ```
 
-`SyncResult` = danh sách event upsert + id bị xoá + `syncState` mới + cờ `FullResyncRequired` (Google trả 410 / Graph delta token hết hạn).
+`SyncResult` = danh sách event upsert + id bị xoá + `syncState` mới + cờ `IsFullSync` (kết quả là toàn bộ event trong cửa sổ → thay cache) + cờ `FullResyncRequired` (Google trả 410 / Graph delta token hết hạn).
+
+## Lưu trữ (SQLite)
+
+- Bảng `accounts`, `calendars` (kèm tuỳ chọn local `is_enabled`, `color_override`), `events`, `sync_state`; xoá account/calendar cascade xuống event + sync state. Version schema ở `PRAGMA user_version`.
+- `ApplySyncResultAsync` ghi event + `syncState` mới trong **một transaction** → không bao giờ lưu token mới mà thiếu dữ liệu.
+- Thời gian lưu Unix ms (UTC) + offset gốc để round-trip `DateTimeOffset`.
+- Event cả ngày là **ngày "trôi"** (không gắn timezone): lưu nửa đêm UTC của ngày bắt đầu / ngày sau ngày cuối; khi query so với giờ địa phương của khoảng đang xem, nên ngày 23 luôn là ngày 23 bất kể timezone máy.
 
 ## Luồng dữ liệu
 

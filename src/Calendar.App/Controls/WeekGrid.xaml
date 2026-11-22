@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Calendar.App.Controls.WeekGrid"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Rows: day headers, all-day band, scrollable hours. Columns are built in code (gutter + N days). -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="HeaderGrid" Grid.Row="0" Padding="0,4,0,4" />
+
+        <Grid x:Name="AllDayGrid"
+              Grid.Row="1"
+              MinHeight="8"
+              Padding="0,2,0,4"
+              BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+              BorderThickness="0,0,0,1" />
+
+        <ScrollViewer x:Name="Scroller"
+                      Grid.Row="2"
+                      HorizontalScrollMode="Disabled"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
+            <Grid x:Name="BodyGrid" />
+        </ScrollViewer>
+    </Grid>
+</UserControl>

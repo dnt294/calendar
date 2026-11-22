@@ -1,0 +1,7 @@
+{
+  "profiles": {
+    "Calendar.App (Package)": {
+      "commandName": "MsixPackage"
+    }
+  }
+}
