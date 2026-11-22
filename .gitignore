@@ -425,8 +425,29 @@ FodyWeavers.xsd
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
 
-# App secrets
-appsettings.local.json
+# ===== Project-specific =====
 
-# macOS
+# Secrets / OAuth credentials
+appsettings.local.json
+client_secret*.json
+credentials*.json
+*.env
+.env*
+
+# Local data created while debugging (SQLite cache, token stores)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# IDEs not covered above
+.idea/
+*.sln.iml
+
+# Claude Code per-user settings
+.claude/settings.local.json
+
+# OS files
 .DS_Store
+Thumbs.db
+desktop.ini
