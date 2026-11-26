@@ -5,6 +5,7 @@ using Calendar.Core.Storage;
 using Calendar.Core.Sync;
 using Calendar.Providers.Google;
 using Calendar.Providers.Google.Storage;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Windows.Storage;
 
@@ -33,7 +34,11 @@ public partial class App : Application
             providers.Add(new GoogleCalendarProvider(google, tokens));
         }
 
-        var viewModel = new ShellViewModel(store, new SyncEngine(store, providers), configError);
+        var engine = new SyncEngine(store, providers);
+        var coordinator = new SyncCoordinator(
+            ct => engine.SyncAllAsync(SyncEngine.DefaultWindow(DateTimeOffset.Now), ct), TimeProvider.System);
+
+        var viewModel = new ShellViewModel(store, engine, coordinator, DispatcherQueue.GetForCurrentThread(), configError);
         _window = new MainWindow(viewModel);
         _window.Activate();
 

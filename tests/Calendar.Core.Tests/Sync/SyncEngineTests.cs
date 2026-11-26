@@ -212,7 +212,7 @@ public sealed class SyncEngineTests : IAsyncLifetime
 
         public string ProviderId => "fake";
 
-        public Task<Account> SignInAsync(CancellationToken ct) =>
+        public Task<Account> SignInAsync(string? loginHint, CancellationToken ct) =>
             SignInError is null ? Task.FromResult(NextAccount ?? Account) : Task.FromException<Account>(SignInError);
 
         public Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(Account a, CancellationToken ct) =>

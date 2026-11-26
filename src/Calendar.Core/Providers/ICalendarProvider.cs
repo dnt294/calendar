@@ -12,7 +12,8 @@ public interface ICalendarProvider
     string ProviderId { get; }
 
     /// <summary>Interactive sign-in (browser / WAM). Returns the account that was signed in.</summary>
-    Task<Account> SignInAsync(CancellationToken ct);
+    /// <param name="loginHint">Email to pre-fill when signing an existing account in again; null for a new account.</param>
+    Task<Account> SignInAsync(string? loginHint, CancellationToken ct);
 
     /// <summary>Revokes/clears the stored token of <paramref name="account"/>.</summary>
     Task SignOutAsync(Account account, CancellationToken ct);

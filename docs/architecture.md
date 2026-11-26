@@ -56,13 +56,13 @@ public interface ICalendarProvider
 ## Luồng dữ liệu
 
 1. App mở → đọc SQLite → render ngay (offline-first).
-2. `SyncEngine` chạy nền: với mỗi calendar đang bật → `SyncEventsAsync` → ghi SQLite → phát sự kiện `EventsChanged` → ViewModel reload khoảng đang xem.
+2. `SyncCoordinator` (định kỳ 5', khi focus nếu lần trước > 1', nút ⟳ / Ctrl+R; không bao giờ chạy chồng, thao tác thêm/xoá account chạy độc quyền) gọi `SyncEngine` chạy nền: với mỗi calendar đang bật → `SyncEventsAsync` → ghi SQLite → phát sự kiện `EventsChanged` → ViewModel reload khoảng đang xem.
 3. Sửa/tạo/xoá: gọi provider **trực tiếp** (online-only) → thành công thì ghi SQLite → UI cập nhật. Lỗi → hiện thông báo, không đổi cache.
 4. `ReminderScheduler` đọc SQLite, đặt hẹn giờ cho các nhắc trong 24h tới, bắn toast.
 
 ## Event lặp
 
-- Google: `events.list` với `singleEvents=true` → nhận sẵn từng occurrence. Lưu ý: `syncToken` vẫn dùng được với `singleEvents=true`.
+- Google: `events.list` với `singleEvents=true` → nhận sẵn từng occurrence. Sync incremental dùng `updatedMin` (+ `showDeleted`) **trong khung cache** `timeMin`/`timeMax`, không dùng `syncToken` vì token không kết hợp được với khung thời gian. State lưu `v2|<lần full sync>|<lần sync gần nhất>`; full sync lại mỗi 7 ngày để khung trượt theo ngày; 410 → full resync.
 - Graph: `/me/calendars/{id}/calendarView/delta` → trả occurrence trong khoảng thời gian.
 - Lưu `SeriesId` + `IsOccurrence` để UI hiện icon lặp và giới hạn sửa ở mức occurrence.
 

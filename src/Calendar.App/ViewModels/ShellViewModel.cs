@@ -8,31 +8,49 @@ using Calendar.Core.Sync;
 using Calendar.Providers.Google;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Calendar.App.ViewModels;
 
-/// <summary>State of the main window: visible week, its events, sign-in and sync status.</summary>
+/// <summary>An account whose token is expired or revoked; shown as an InfoBar with a sign-in button.</summary>
+public sealed class ReauthPromptViewModel(Account account, IAsyncRelayCommand signIn)
+{
+    public Account Account { get; } = account;
+    public string Message => $"{Account.Email} cần đăng nhập lại. Lịch của tài khoản này đang hiện từ dữ liệu đã lưu.";
+    public IAsyncRelayCommand SignIn { get; } = signIn;
+}
+
+/// <summary>State of the main window: visible week, its events, accounts, sign-in and sync status.</summary>
 public sealed partial class ShellViewModel : ObservableObject
 {
     private const int DaysInView = 7;
     private static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan SyncInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan SyncOnFocusMinAge = TimeSpan.FromMinutes(1);
 
     /// <summary>TODO(Phase 9): read from settings.</summary>
     private static readonly DayOfWeek FirstDayOfWeek = DayOfWeek.Monday;
 
     private readonly ICalendarStore _store;
-    private readonly SyncEngine _sync;
+    private readonly SyncEngine _engine;
+    private readonly SyncCoordinator _sync;
+    private readonly DispatcherQueue _dispatcher;
     private readonly string? _configError;
     private int _reloadVersion;
     private bool _initialized;
+    private int _handledRuns;
 
-    public ShellViewModel(ICalendarStore store, SyncEngine sync, string? configError)
+    public ShellViewModel(ICalendarStore store, SyncEngine engine, SyncCoordinator sync, DispatcherQueue dispatcher,
+        string? configError)
     {
         _store = store;
+        _engine = engine;
         _sync = sync;
+        _dispatcher = dispatcher;
         _configError = configError;
         StartDate = WeekNavigation.StartOfWeek(DateOnly.FromDateTime(DateTime.Today), FirstDayOfWeek);
+        _sync.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => _ = OnSyncStateChangedAsync());
     }
 
     // ---- State ------------------------------------------------------------------------------
@@ -49,11 +67,27 @@ public sealed partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial IReadOnlyList<CalendarInfo> Calendars { get; set; } = [];
 
+    /// <summary>An account operation (sign-in, removal) is running.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsIdle))]
     public partial bool IsBusy { get; set; }
 
     public bool IsIdle => !IsBusy;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNotSyncing))]
+    public partial bool IsSyncing { get; set; }
+
+    public bool IsNotSyncing => !IsSyncing;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsOnline))]
+    public partial bool IsOffline { get; set; }
+
+    public bool IsOnline => !IsOffline;
+
+    [ObservableProperty]
+    public partial string SyncStatus { get; set; } = "Chưa đồng bộ";
 
     [ObservableProperty]
     public partial bool IsMessageOpen { get; set; }
@@ -72,9 +106,12 @@ public sealed partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial bool HasNoAccounts { get; set; } = true;
 
+    /// <summary>Accounts that must sign in again (task 4.4).</summary>
+    public ObservableCollection<ReauthPromptViewModel> ReauthPrompts { get; } = [];
+
     // ---- Lifecycle --------------------------------------------------------------------------
 
-    /// <summary>Offline-first: show the cache, then sync in the background.</summary>
+    /// <summary>Offline-first: show the cache immediately, then sync in the background.</summary>
     public async Task InitializeAsync()
     {
         try
@@ -83,16 +120,26 @@ public sealed partial class ShellViewModel : ObservableObject
             _initialized = true;
             await RefreshSidebarAsync();
             await ReloadAsync();
-
-            if ((await _store.GetAccountsAsync()).Count > 0)
-                await SyncAllAsync();
-            else if (_configError is null)
-                ShowMessage(InfoBarSeverity.Informational, "Bấm \"Thêm tài khoản\" để đăng nhập Google.");
         }
         catch (Exception ex)
         {
             ShowMessage(InfoBarSeverity.Error, $"Không mở được dữ liệu: {ex.Message}");
+            return;
         }
+
+        if (HasNoAccounts && _configError is null)
+            ShowMessage(InfoBarSeverity.Informational, "Bấm \"Thêm tài khoản\" để đăng nhập Google.");
+
+        _sync.Start(SyncInterval);
+        if (!HasNoAccounts)
+            _ = _sync.SyncNowAsync();
+    }
+
+    /// <summary>Window got focus: sync if the last one is more than a minute old.</summary>
+    public void OnWindowActivated()
+    {
+        if (_initialized && !HasNoAccounts)
+            _ = _sync.SyncIfStaleAsync(SyncOnFocusMinAge);
     }
 
     // ---- Navigation -------------------------------------------------------------------------
@@ -112,10 +159,74 @@ public sealed partial class ShellViewModel : ObservableObject
         _ = ReloadSafeAsync();
     }
 
-    // ---- Accounts & sync --------------------------------------------------------------------
+    // ---- Sync -------------------------------------------------------------------------------
+
+    [RelayCommand]
+    private Task SyncNowAsync() => _sync.SyncNowAsync();
+
+    private async Task OnSyncStateChangedAsync()
+    {
+        IsSyncing = _sync.IsSyncing;
+        IsOffline = _sync.IsOffline;
+        SyncStatus = FormatSyncStatus();
+
+        // Compare run counts instead of watching IsSyncing flip: for a fast run, both the "started"
+        // and "finished" notifications are handled after it has already ended.
+        var completed = _sync.CompletedRuns;
+        if (completed == _handledRuns)
+            return;
+        _handledRuns = completed;
+
+        await RefreshSidebarAsync();
+        await ReloadSafeAsync();
+        ApplySyncResults(_sync.LastResults, _sync.LastError);
+    }
+
+    private string FormatSyncStatus()
+    {
+        if (_sync.IsSyncing)
+            return "Đang đồng bộ…";
+        var last = _sync.LastSyncedAt is { } t ? $"cập nhật lúc {t.ToLocalTime():t}" : "chưa đồng bộ";
+        return _sync.IsOffline ? $"Offline · {last}" : $"Online · {last}";
+    }
+
+    private void ApplySyncResults(IReadOnlyList<AccountSyncResult> results, Exception? runError)
+    {
+        // Re-auth prompts reflect the latest run: add newly failing accounts, drop recovered ones.
+        var needReauth = results.Where(r => r.Error is ReauthenticationRequiredException).Select(r => r.Account).ToList();
+        foreach (var stale in ReauthPrompts.Where(p => needReauth.All(a => a.Id != p.Account.Id)).ToList())
+            ReauthPrompts.Remove(stale);
+        foreach (var account in needReauth.Where(a => ReauthPrompts.All(p => p.Account.Id != a.Id)))
+            ReauthPrompts.Add(new ReauthPromptViewModel(account,
+                new AsyncRelayCommand(() => SignInAgainAsync(account))));
+
+        if (runError is not null)
+        {
+            ShowMessage(InfoBarSeverity.Error, $"Đồng bộ lỗi: {runError.Message}");
+            return;
+        }
+
+        // Network failures are shown by the Offline status, auth failures by the prompts above.
+        var other = results
+            .Where(r => r.Error is not null && r.Error is not ReauthenticationRequiredException && !SyncErrors.IsNetworkError(r.Error))
+            .ToList();
+        if (other.Count > 0)
+            ShowMessage(InfoBarSeverity.Error, string.Join("\n",
+                other.Select(r => $"{r.Account.Email}: không đồng bộ được ({r.Error!.Message}). Đang hiện dữ liệu đã lưu.")));
+    }
+
+    // ---- Accounts ---------------------------------------------------------------------------
 
     [RelayCommand(IncludeCancelCommand = true)]
-    private async Task AddAccountAsync(CancellationToken ct)
+    private Task AddAccountAsync(CancellationToken ct) => SignInCoreAsync(loginHint: null, ct);
+
+    private async Task SignInAgainAsync(Account account)
+    {
+        await SignInCoreAsync(account.Email, CancellationToken.None);
+        await _sync.SyncNowAsync(); // refreshes the prompts
+    }
+
+    private async Task SignInCoreAsync(string? loginHint, CancellationToken ct)
     {
         if (_configError is not null)
         {
@@ -129,11 +240,16 @@ public sealed partial class ShellViewModel : ObservableObject
         timeout.CancelAfter(SignInTimeout);
         try
         {
-            var account = await _sync.AddAccountAsync(GoogleCalendarProvider.Id,
-                SyncEngine.DefaultWindow(DateTimeOffset.Now), timeout.Token);
+            var account = await _sync.RunExclusiveAsync(token => _engine.AddAccountAsync(GoogleCalendarProvider.Id,
+                SyncEngine.DefaultWindow(DateTimeOffset.Now), token, loginHint), timeout.Token);
             await RefreshSidebarAsync();
             await ReloadAsync();
-            ShowMessage(InfoBarSeverity.Success, $"Đã thêm {account.Email}.");
+
+            if (loginHint is not null && !string.Equals(account.Email, loginHint, StringComparison.OrdinalIgnoreCase))
+                ShowMessage(InfoBarSeverity.Warning,
+                    $"Bạn đã đăng nhập {account.Email} thay vì {loginHint}; {account.Email} được thêm như tài khoản mới.");
+            else
+                ShowMessage(InfoBarSeverity.Success, loginHint is null ? $"Đã thêm {account.Email}." : $"Đã đăng nhập lại {account.Email}.");
         }
         catch (OperationCanceledException)
         {
@@ -143,7 +259,7 @@ public sealed partial class ShellViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ShowMessage(InfoBarSeverity.Error, $"Không thêm được tài khoản: {ex.Message}");
+            ShowMessage(InfoBarSeverity.Error, $"Không đăng nhập được: {ex.Message}");
         }
         finally
         {
@@ -158,7 +274,10 @@ public sealed partial class ShellViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var signOutError = await _sync.RemoveAccountAsync(group.Account, CancellationToken.None);
+            var signOutError = await _sync.RunExclusiveAsync(
+                ct => _engine.RemoveAccountAsync(group.Account, ct), CancellationToken.None);
+            foreach (var prompt in ReauthPrompts.Where(p => p.Account.Id == group.Account.Id).ToList())
+                ReauthPrompts.Remove(prompt);
             await RefreshSidebarAsync();
             await ReloadAsync();
             if (signOutError is null)
@@ -171,30 +290,6 @@ public sealed partial class ShellViewModel : ObservableObject
         catch (Exception ex)
         {
             ShowMessage(InfoBarSeverity.Error, $"Không xoá được {group.Email}: {ex.Message}");
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private async Task SyncAllAsync()
-    {
-        IsBusy = true;
-        try
-        {
-            var results = await _sync.SyncAllAsync(SyncEngine.DefaultWindow(DateTimeOffset.Now), CancellationToken.None);
-            await RefreshSidebarAsync();
-            await ReloadAsync();
-
-            var failed = results.Where(r => !r.Succeeded).ToList();
-            if (failed.Count > 0)
-                ShowMessage(failed.Any(r => r.Error is ReauthenticationRequiredException)
-                        ? InfoBarSeverity.Warning
-                        : InfoBarSeverity.Error,
-                    string.Join("\n", failed.Select(r => r.Error is ReauthenticationRequiredException
-                        ? $"{r.Account.Email} cần đăng nhập lại (bấm \"Thêm tài khoản\" và chọn lại tài khoản này)."
-                        : $"{r.Account.Email}: không sync được ({r.Error!.Message}). Đang hiện dữ liệu đã lưu.")));
         }
         finally
         {

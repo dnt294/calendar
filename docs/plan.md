@@ -33,10 +33,10 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 4 — Offline & sync incremental (~2 buổi)
 
-- [ ] **4.1** Google `syncToken`, Graph `delta`; xử lý 410 / token delta hết hạn → full resync. Test với HTTP mock.
-- [ ] **4.2** `SyncEngine`: định kỳ 5', khi focus, nút Sync; không chạy chồng; trạng thái Online/Offline/Last synced.
-- [ ] **4.3** Khởi động offline-first: render từ SQLite trước khi sync.
-- [ ] **4.4** Lỗi auth → `InfoBar` đăng nhập lại theo account.
+- [x] **4.1** Google `syncToken`, Graph `delta`; xử lý 410 / token delta hết hạn → full resync. Test với HTTP mock. _(Google: dùng `updatedMin` trong khung cache thay cho `syncToken` vì token không kết hợp được với `timeMin`/`timeMax`; full sync mỗi 7 ngày. Graph `delta` làm cùng 3.1.)_
+- [x] **4.2** `SyncEngine`: định kỳ 5', khi focus, nút Sync; không chạy chồng; trạng thái Online/Offline/Last synced.
+- [x] **4.3** Khởi động offline-first: render từ SQLite trước khi sync.
+- [x] **4.4** Lỗi auth → `InfoBar` đăng nhập lại theo account.
   - Xong khi: rút mạng, mở app vẫn thấy lịch; sửa event trên web → app cập nhật trong ≤5'.
 
 ## Phase 5 — View Ngày & Tháng, mini-month (~1–2 buổi)

@@ -1,13 +1,16 @@
+using System.Net;
 using Calendar.Core.Models;
 using Calendar.Core.Providers;
 using Google;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
+using Google.Apis.Auth.OAuth2.Requests;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Calendar.v3;
 using Google.Apis.Calendar.v3.Data;
 using Google.Apis.Services;
 using Google.Apis.Util.Store;
+using HttpClientFactory = Google.Apis.Http.IHttpClientFactory;
 
 namespace Calendar.Providers.Google;
 
@@ -18,16 +21,27 @@ public sealed record GoogleOAuthOptions(string ClientId, string ClientSecret);
 public sealed class GoogleCalendarProvider : ICalendarProvider
 {
     public const string Id = "google";
+
+    /// <summary>Incremental syncs never move the cache window; a full sync this often re-centers it.</summary>
+    public static readonly TimeSpan FullSyncInterval = TimeSpan.FromDays(7);
+
     private const string ApplicationName = "personal-calendar";
     private static readonly string[] Scopes = [CalendarService.Scope.Calendar];
 
     private readonly GoogleOAuthOptions _options;
     private readonly IDataStore _tokens;
+    private readonly TimeProvider _time;
+    private readonly HttpClientFactory? _http;
 
-    public GoogleCalendarProvider(GoogleOAuthOptions options, IDataStore tokens)
+    /// <param name="time">Clock for the full-sync interval (tests pass a fake).</param>
+    /// <param name="httpClientFactory">HTTP override for tests; null = real network.</param>
+    public GoogleCalendarProvider(GoogleOAuthOptions options, IDataStore tokens, TimeProvider? time = null,
+        HttpClientFactory? httpClientFactory = null)
     {
         _options = options;
         _tokens = tokens;
+        _time = time ?? TimeProvider.System;
+        _http = httpClientFactory;
     }
 
     public string ProviderId => Id;
@@ -39,12 +53,12 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
     /// account can be added, and always asks for consent, so Google returns a refresh token even for
     /// an account that was signed in before. The email is learned from the primary calendar id.
     /// </summary>
-    public async Task<Account> SignInAsync(CancellationToken ct)
+    public async Task<Account> SignInAsync(string? loginHint, CancellationToken ct)
     {
         var pendingKey = "pending-" + Guid.NewGuid().ToString("N");
         try
         {
-            var flow = CreateFlow(prompt: "select_account consent");
+            var flow = new HintedFlow(Initializer("select_account consent"), loginHint);
             var credential = await new AuthorizationCodeInstalledApp(flow, new LocalServerCodeReceiver())
                 .AuthorizeAsync(pendingKey, ct);
 
@@ -101,33 +115,68 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
             return (IReadOnlyList<CalendarInfo>)result;
         });
 
+    /// <summary>Overlap for <c>updatedMin</c>, so clock skew between this PC and Google never loses a change.</summary>
+    public static readonly TimeSpan UpdatedMinOverlap = TimeSpan.FromMinutes(5);
+
     /// <summary>
-    /// Full sync of <paramref name="window"/> with recurring events expanded (<c>singleEvents=true</c>).
-    /// TODO(4.1): incremental sync with syncToken; <paramref name="syncState"/> is ignored for now.
+    /// Recurring events are expanded (<c>singleEvents=true</c>), always inside <paramref name="window"/>.
+    /// Without a usable state, or when the last full sync is older than <see cref="FullSyncInterval"/>,
+    /// this is a full sync; otherwise it fetches only events changed or deleted since the last sync
+    /// (<c>updatedMin</c>, see <see cref="GoogleSyncState"/>). HTTP 410 yields
+    /// <see cref="SyncResult.FullResyncRequired"/>.
     /// </summary>
     public Task<SyncResult> SyncEventsAsync(Account account, CalendarInfo calendar, string? syncState,
         DateRange window, CancellationToken ct) =>
         WithService(account, ct, async service =>
         {
-            var events = new List<CalendarEvent>();
+            var now = _time.GetUtcNow();
+            var state = GoogleSyncState.TryParse(syncState);
+            var incremental = state is not null && now - state.LastFullSync < FullSyncInterval;
+
+            var upserts = new List<CalendarEvent>();
+            var deleted = new List<string>();
             string? pageToken = null;
             do
             {
                 var request = service.Events.List(calendar.Id);
                 request.SingleEvents = true;
-                request.ShowDeleted = false;
-                request.TimeMinDateTimeOffset = window.Start;
-                request.TimeMaxDateTimeOffset = window.End;
                 request.MaxResults = 2500;
                 request.PageToken = pageToken;
-                var page = await request.ExecuteAsync(ct);
-                events.AddRange((page.Items ?? [])
-                    .Select(e => GoogleMapper.ToEvent(e, account.Id, calendar.Id, page.DefaultReminders))
-                    .OfType<CalendarEvent>());
+                request.TimeMinDateTimeOffset = window.Start;
+                request.TimeMaxDateTimeOffset = window.End;
+                if (incremental)
+                {
+                    // Deleted events since updatedMin are always included, as status "cancelled".
+                    request.UpdatedMinDateTimeOffset = state!.LastSync - UpdatedMinOverlap;
+                    request.ShowDeleted = true;
+                }
+                else
+                {
+                    request.ShowDeleted = false;
+                }
+
+                Events page;
+                try
+                {
+                    page = await request.ExecuteAsync(ct);
+                }
+                catch (GoogleApiException ex) when (incremental && ex.HttpStatusCode == HttpStatusCode.Gone)
+                {
+                    return SyncResult.ResyncRequired();
+                }
+
+                foreach (var item in page.Items ?? [])
+                {
+                    if (GoogleMapper.ToEvent(item, account.Id, calendar.Id, page.DefaultReminders) is { } ev)
+                        upserts.Add(ev);
+                    else if (incremental)
+                        deleted.Add(item.Id);
+                }
                 pageToken = page.NextPageToken;
             } while (pageToken is not null);
 
-            return new SyncResult(events, [], NewSyncState: null, IsFullSync: true);
+            var newState = new GoogleSyncState(incremental ? state!.LastFullSync : now, now).Serialize();
+            return new SyncResult(upserts, deleted, newState, IsFullSync: !incremental);
         });
 
     // ---- Write (Phase 6 / 7) ----------------------------------------------------------------
@@ -148,19 +197,33 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
 
     private ClientSecrets Secrets => new() { ClientId = _options.ClientId, ClientSecret = _options.ClientSecret };
 
-    private GoogleAuthorizationCodeFlow CreateFlow(string? prompt = null) => new(new GoogleAuthorizationCodeFlow.Initializer
+    private GoogleAuthorizationCodeFlow.Initializer Initializer(string? prompt = null)
     {
-        ClientSecrets = Secrets,
-        Scopes = Scopes,
-        DataStore = _tokens,
-        Prompt = prompt,
-    });
+        var init = new GoogleAuthorizationCodeFlow.Initializer
+        {
+            ClientSecrets = Secrets,
+            Scopes = Scopes,
+            DataStore = _tokens,
+            Prompt = prompt,
+        };
+        if (_http is not null)
+            init.HttpClientFactory = _http;
+        return init;
+    }
 
-    private static CalendarService CreateService(UserCredential credential) => new(new BaseClientService.Initializer
+    private GoogleAuthorizationCodeFlow CreateFlow() => new(Initializer());
+
+    private CalendarService CreateService(UserCredential credential)
     {
-        HttpClientInitializer = credential,
-        ApplicationName = ApplicationName,
-    });
+        var init = new BaseClientService.Initializer
+        {
+            HttpClientInitializer = credential,
+            ApplicationName = ApplicationName,
+        };
+        if (_http is not null)
+            init.HttpClientFactory = _http;
+        return new CalendarService(init);
+    }
 
     /// <summary>Loads the stored token (never opens a browser) and maps auth failures.</summary>
     private async Task<T> WithService<T>(Account account, CancellationToken ct, Func<CalendarService, Task<T>> action)
@@ -177,9 +240,22 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
         {
             throw new ReauthenticationRequiredException(account.Id, inner: ex);
         }
-        catch (GoogleApiException ex) when (ex.HttpStatusCode == System.Net.HttpStatusCode.Unauthorized)
+        catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.Unauthorized)
         {
             throw new ReauthenticationRequiredException(account.Id, inner: ex);
+        }
+    }
+
+    /// <summary>Pre-fills the email on Google's sign-in page when re-authenticating an account.</summary>
+    private sealed class HintedFlow(GoogleAuthorizationCodeFlow.Initializer init, string? loginHint)
+        : GoogleAuthorizationCodeFlow(init)
+    {
+        public override AuthorizationCodeRequestUrl CreateAuthorizationCodeRequest(string redirectUri)
+        {
+            var request = base.CreateAuthorizationCodeRequest(redirectUri);
+            if (loginHint is not null && request is GoogleAuthorizationCodeRequestUrl google)
+                google.LoginHint = loginHint;
+            return request;
         }
     }
 }

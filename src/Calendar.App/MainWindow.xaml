@@ -54,13 +54,48 @@
                                Margin="12,0,0,2" />
                 </StackPanel>
             </TitleBar.Content>
+
+            <TitleBar.RightHeader>
+                <Grid Margin="0,0,8,0" VerticalAlignment="Center">
+                    <Button Command="{x:Bind ViewModel.SyncNowCommand}"
+                            Style="{StaticResource SubtleButtonStyle}"
+                            Visibility="{x:Bind ViewModel.IsNotSyncing, Mode=OneWay}"
+                            ToolTipService.ToolTip="Đồng bộ ngay (Ctrl+R)"
+                            AutomationProperties.Name="Đồng bộ ngay">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Modifiers="Control" Key="R" />
+                        </Button.KeyboardAccelerators>
+                        <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                    </Button>
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsSyncing, Mode=OneWay}"
+                                  Width="18" Height="18"
+                                  ToolTipService.ToolTip="Đang đồng bộ…" />
+                </Grid>
+            </TitleBar.RightHeader>
         </TitleBar>
 
-        <InfoBar Grid.Row="1"
-                 Margin="8,0,8,4"
-                 IsOpen="{x:Bind ViewModel.IsMessageOpen, Mode=TwoWay}"
-                 Severity="{x:Bind ViewModel.MessageSeverity, Mode=OneWay}"
-                 Message="{x:Bind ViewModel.Message, Mode=OneWay}" />
+        <StackPanel Grid.Row="1" Margin="8,0,8,4" Spacing="4">
+            <!-- One prompt per account whose token expired or was revoked (task 4.4). -->
+            <ItemsControl ItemsSource="{x:Bind ViewModel.ReauthPrompts}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ReauthPromptViewModel">
+                        <InfoBar IsOpen="True"
+                                 IsClosable="False"
+                                 Severity="Warning"
+                                 Margin="0,0,0,4"
+                                 Message="{x:Bind Message}">
+                            <InfoBar.ActionButton>
+                                <Button Content="Đăng nhập" Command="{x:Bind SignIn}" />
+                            </InfoBar.ActionButton>
+                        </InfoBar>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <InfoBar IsOpen="{x:Bind ViewModel.IsMessageOpen, Mode=TwoWay}"
+                     Severity="{x:Bind ViewModel.MessageSeverity, Mode=OneWay}"
+                     Message="{x:Bind ViewModel.Message, Mode=OneWay}" />
+        </StackPanel>
 
         <SplitView x:Name="Shell"
                    Grid.Row="2"
@@ -201,6 +236,20 @@
                         <Button Content="Huỷ đăng nhập"
                                 Command="{x:Bind ViewModel.AddAccountCancelCommand}"
                                 Visibility="{x:Bind ViewModel.AddAccountCommand.IsRunning, Mode=OneWay}" />
+
+                        <!-- Sync status: ● Online / ⚠ Offline · last update. -->
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xEA3B;" FontSize="10"
+                                      Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                      Visibility="{x:Bind ViewModel.IsOnline, Mode=OneWay}" />
+                            <FontIcon Glyph="&#xE7BA;" FontSize="12"
+                                      Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                      Visibility="{x:Bind ViewModel.IsOffline, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind ViewModel.SyncStatus, Mode=OneWay}"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
             </SplitView.Pane>

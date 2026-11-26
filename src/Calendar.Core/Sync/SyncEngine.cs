@@ -11,8 +11,8 @@ public sealed record AccountSyncResult(Account Account, Exception? Error)
 }
 
 /// <summary>
-/// Pulls calendars and events from the providers into the local store.
-/// TODO(4.2): periodic sync, sync on focus, no overlapping runs.
+/// Pulls calendars and events from the providers into the local store. Not thread-safe:
+/// run it through <see cref="SyncCoordinator"/>, which serializes all calls.
 /// </summary>
 public sealed class SyncEngine
 {
@@ -29,9 +29,11 @@ public sealed class SyncEngine
     public static DateRange DefaultWindow(DateTimeOffset now) => new(now.AddDays(-90), now.AddDays(365));
 
     /// <summary>Interactive sign-in, then a first full sync of the new account.</summary>
-    public async Task<Account> AddAccountAsync(string providerId, DateRange window, CancellationToken ct)
+    /// <param name="loginHint">Email of an existing account that must sign in again; null for a new account.</param>
+    public async Task<Account> AddAccountAsync(string providerId, DateRange window, CancellationToken ct,
+        string? loginHint = null)
     {
-        var account = await Provider(providerId).SignInAsync(ct);
+        var account = await Provider(providerId).SignInAsync(loginHint, ct);
         await _store.UpsertAccountAsync(account, ct);
         await SyncAccountAsync(account, window, ct);
         return account;
