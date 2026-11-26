@@ -56,9 +56,9 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 8 — Nhắc lịch & tray (~2 buổi)
 
-- [ ] **8.1** Tray icon (`H.NotifyIcon.WinUI`), đóng cửa sổ = ẩn, menu tray.
-- [ ] **8.2** `ReminderScheduler` + AppNotification toast: Join / Snooze / Dismiss; không bắn trùng sau khi sync.
-- [ ] **8.3** Khởi động cùng Windows (MSIX `StartupTask`).
+- [x] **8.1** Tray icon (`H.NotifyIcon.WinUI`), đóng cửa sổ = ẩn, menu tray.
+- [x] **8.2** `ReminderScheduler` + AppNotification toast: Join / Snooze / Dismiss; không bắn trùng sau khi sync.
+- [x] **8.3** Khởi động cùng Windows (MSIX `StartupTask`).
   - Xong khi: đóng cửa sổ, event có nhắc 5' → toast hiện đúng giờ, Join mở link họp.
 
 ## Phase 9 — Hoàn thiện (~1–2 buổi)

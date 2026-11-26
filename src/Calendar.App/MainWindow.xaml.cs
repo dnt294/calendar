@@ -1,9 +1,12 @@
 using Calendar.App.Controls;
 using Calendar.App.Helpers;
+using Calendar.App.Services;
 using Calendar.App.ViewModels;
 using Calendar.App.Views;
 using Calendar.Core.Layout;
 using Calendar.Core.Models;
+using H.NotifyIcon;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -42,9 +45,112 @@ public sealed partial class MainWindow : Window
         ShowSelectedDate(ViewModel.SelectedDate);
 
         AddShortcuts();
+        CreateTray();
     }
 
     private void OnPaneToggleRequested(TitleBar sender, object args) => Shell.IsPaneOpen = !Shell.IsPaneOpen;
+
+    // ---- Tray (task 8.1): closing the window hides it; "Thoát" in the tray menu exits ---------
+
+    private TaskbarIcon? _tray;
+    private MenuFlyoutItem? _nextEventItem;
+    private ToggleMenuFlyoutItem? _startupItem;
+    private bool _exiting;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _minuteTimer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+
+    /// <summary>Shows the window again (tray click, toast, second launch) and brings it to the front.</summary>
+    public void ShowFromTray()
+    {
+        AppWindow.Show();
+        Activate();
+    }
+
+    private void CreateTray()
+    {
+        _nextEventItem = new MenuFlyoutItem { Text = ViewModel.NextEventText, IsEnabled = false };
+        _startupItem = new ToggleMenuFlyoutItem
+        {
+            Text = "Khởi động cùng Windows",
+            Command = new CommunityToolkit.Mvvm.Input.AsyncRelayCommand(ToggleStartupAsync),
+        };
+        var menu = new MenuFlyout();
+        menu.Items.Add(_nextEventItem);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(new MenuFlyoutItem { Text = "Mở Calendar", Command = new CommunityToolkit.Mvvm.Input.RelayCommand(ShowFromTray) });
+        menu.Items.Add(new MenuFlyoutItem { Text = "Đồng bộ ngay", Command = ViewModel.SyncNowCommand });
+        menu.Items.Add(_startupItem);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(new MenuFlyoutItem { Text = "Thoát", Command = new CommunityToolkit.Mvvm.Input.RelayCommand(Exit) });
+
+        _tray = new TaskbarIcon
+        {
+            ToolTipText = "Calendar",
+            IconSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///Assets/TrayIcon.ico")),
+            ContextMenuMode = ContextMenuMode.SecondWindow,
+            ContextFlyout = menu,
+            NoLeftClickDelay = true,
+            LeftClickCommand = new CommunityToolkit.Mvvm.Input.RelayCommand(ShowFromTray),
+        };
+        _tray.ForceCreate();
+
+        // Closing the window keeps the app (and its reminders) running in the tray.
+        AppWindow.Closing += (_, e) =>
+        {
+            if (_exiting)
+                return;
+            e.Cancel = true;
+            AppWindow.Hide();
+        };
+
+        ViewModel.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(ShellViewModel.NextEventText))
+                UpdateNextEvent();
+        };
+        // The "next event" changes as time passes even without a sync.
+        _minuteTimer.Interval = TimeSpan.FromMinutes(1);
+        _minuteTimer.Tick += (_, _) => _ = ViewModel.RefreshUpcomingAsync();
+        _minuteTimer.Start();
+
+        _ = LoadStartupStateAsync();
+    }
+
+    private void UpdateNextEvent()
+    {
+        if (_nextEventItem is not null)
+            _nextEventItem.Text = ViewModel.NextEventText;
+        if (_tray is not null)
+            _tray.ToolTipText = $"Calendar — {ViewModel.NextEventText}";
+    }
+
+    private async Task LoadStartupStateAsync()
+    {
+        try
+        {
+            _startupItem!.IsChecked = await StartupService.IsEnabledAsync();
+        }
+        catch (Exception)
+        {
+            _startupItem!.IsEnabled = false; // not packaged / not available
+        }
+    }
+
+    private async Task ToggleStartupAsync()
+    {
+        // The toggle already flipped IsChecked; apply it and show what Windows actually allowed.
+        var (enabled, problem) = await StartupService.SetEnabledAsync(_startupItem!.IsChecked);
+        _startupItem.IsChecked = enabled;
+        if (problem is not null)
+            ViewModel.ShowInfo(problem);
+    }
+
+    private void Exit()
+    {
+        _exiting = true;
+        _minuteTimer.Stop();
+        _tray?.Dispose();
+        ((App)Application.Current).ExitApp();
+    }
 
     // ---- View mode & date -------------------------------------------------------------------
 

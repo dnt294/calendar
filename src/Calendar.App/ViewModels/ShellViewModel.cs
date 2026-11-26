@@ -5,6 +5,7 @@ using Calendar.Core.Editing;
 using Calendar.Core.Layout;
 using Calendar.Core.Models;
 using Calendar.Core.Providers;
+using Calendar.Core.Reminders;
 using Calendar.Core.Storage;
 using Calendar.Core.Sync;
 using Calendar.Providers.Google;
@@ -36,6 +37,7 @@ public sealed partial class ShellViewModel : ObservableObject
     private readonly ICalendarStore _store;
     private readonly SyncEngine _engine;
     private readonly EventEditor _editor;
+    private readonly ReminderScheduler _reminders;
     private readonly SyncCoordinator _sync;
     private readonly DispatcherQueue _dispatcher;
     private readonly string? _configError;
@@ -44,11 +46,12 @@ public sealed partial class ShellViewModel : ObservableObject
     private int _handledRuns;
 
     public ShellViewModel(ICalendarStore store, SyncEngine engine, EventEditor editor, SyncCoordinator sync,
-        DispatcherQueue dispatcher, string? configError)
+        ReminderScheduler reminders, DispatcherQueue dispatcher, string? configError)
     {
         _store = store;
         _engine = engine;
         _editor = editor;
+        _reminders = reminders;
         _sync = sync;
         _dispatcher = dispatcher;
         _configError = configError;
@@ -141,6 +144,10 @@ public sealed partial class ShellViewModel : ObservableObject
     [ObservableProperty]
     public partial string SyncStatus { get; set; } = "Chưa đồng bộ";
 
+    /// <summary>Tray menu / tooltip: "Sự kiện tiếp theo: Standup 9:00".</summary>
+    [ObservableProperty]
+    public partial string NextEventText { get; set; } = "Không có sự kiện sắp tới";
+
     [ObservableProperty]
     public partial bool IsMessageOpen { get; set; }
 
@@ -170,6 +177,7 @@ public sealed partial class ShellViewModel : ObservableObject
             _initialized = true;
             await RefreshSidebarAsync();
             await ReloadAsync();
+            await RefreshUpcomingAsync();
         }
         catch (Exception ex)
         {
@@ -258,6 +266,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
         await RefreshSidebarAsync();
         await ReloadSafeAsync();
+        await RefreshUpcomingAsync();
         ApplySyncResults(_sync.LastResults, _sync.LastError);
     }
 
@@ -425,6 +434,9 @@ public sealed partial class ShellViewModel : ObservableObject
 
     // ---- Create / edit / delete (Phase 6) ---------------------------------------------------
 
+    /// <summary>Shows a warning in the window's message bar (used by the tray menu).</summary>
+    public void ShowInfo(string message) => ShowMessage(InfoBarSeverity.Warning, message);
+
     /// <summary>Tells the user why a write action is not available (task 6.5).</summary>
     public void ExplainWriteDisabled() =>
         ShowMessage(InfoBarSeverity.Warning, IsOffline
@@ -462,6 +474,7 @@ public sealed partial class ShellViewModel : ObservableObject
         {
             await _sync.RunExclusiveAsync(write, CancellationToken.None);
             await ReloadAsync();
+            await RefreshUpcomingAsync();
             ShowMessage(InfoBarSeverity.Success, successMessage);
             return true;
         }
@@ -496,6 +509,29 @@ public sealed partial class ShellViewModel : ObservableObject
         catch (Exception ex)
         {
             ShowMessage(InfoBarSeverity.Error, $"Không lưu được tuỳ chọn của \"{item.Name}\": {ex.Message}");
+        }
+    }
+
+    // ---- Reminders & next event (Phase 8) ----------------------------------------------------
+
+    /// <summary>Re-plans reminders and the "next event" line from the cache; never throws.</summary>
+    public async Task RefreshUpcomingAsync()
+    {
+        if (!_initialized)
+            return;
+        try
+        {
+            await _reminders.RefreshAsync();
+            var now = DateTimeOffset.Now;
+            var soon = await _store.GetEventsAsync(new DateRange(now, now.AddDays(1)), TimeZoneInfo.Local);
+            var next = ReminderPlanner.NextUpcoming(soon, now);
+            NextEventText = next is null
+                ? "Không có sự kiện trong 24 giờ tới"
+                : $"Sự kiện tiếp theo: {next.Title} {next.Start.ToLocalTime():t}";
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(InfoBarSeverity.Error, $"Không lập được lịch nhắc: {ex.Message}");
         }
     }
 
