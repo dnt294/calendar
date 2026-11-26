@@ -119,6 +119,79 @@ public sealed class SyncEngineTests : IAsyncLifetime
         Assert.Empty(await _store.GetAccountsAsync());
     }
 
+    [Fact]
+    public async Task RemoveAccount_signs_out_and_deletes_cached_data()
+    {
+        _provider.Events["primary"] = [Ev("a")];
+        await _engine.AddAccountAsync("fake", Window, CancellationToken.None);
+
+        var error = await _engine.RemoveAccountAsync(FakeProvider.Account, CancellationToken.None);
+
+        Assert.Null(error);
+        Assert.Equal([FakeProvider.Account.Id], _provider.SignedOut);
+        Assert.Empty(await _store.GetAccountsAsync());
+        Assert.Empty(await _store.GetCalendarsAsync());
+        Assert.Empty(await CachedIds());
+        Assert.Null(await _store.GetSyncStateAsync(FakeProvider.Account.Id, "primary"));
+    }
+
+    [Fact]
+    public async Task RemoveAccount_still_deletes_locally_when_sign_out_fails()
+    {
+        _provider.Events["primary"] = [Ev("a")];
+        await _engine.AddAccountAsync("fake", Window, CancellationToken.None);
+        _provider.SignOutError = new HttpRequestException("offline");
+
+        var error = await _engine.RemoveAccountAsync(FakeProvider.Account, CancellationToken.None);
+
+        Assert.IsType<HttpRequestException>(error);
+        Assert.Empty(await _store.GetAccountsAsync());
+        Assert.Empty(await CachedIds());
+    }
+
+    [Fact]
+    public async Task RemoveAccount_of_unknown_provider_deletes_locally_and_keeps_others()
+    {
+        _provider.Events["primary"] = [Ev("a")];
+        await _engine.AddAccountAsync("fake", Window, CancellationToken.None);
+        var orphan = new Account("other:1", "other", "1", "x@example.com", "X");
+        await _store.UpsertAccountAsync(orphan);
+
+        var error = await _engine.RemoveAccountAsync(orphan, CancellationToken.None);
+
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Equal([FakeProvider.Account], await _store.GetAccountsAsync());
+        Assert.Equal(["a"], await CachedIds());
+    }
+
+    [Fact]
+    public async Task Re_adding_the_same_account_keeps_one_copy()
+    {
+        await _engine.AddAccountAsync("fake", Window, CancellationToken.None);
+        await _engine.AddAccountAsync("fake", Window, CancellationToken.None);
+        Assert.Single(await _store.GetAccountsAsync());
+    }
+    [Fact]
+    public async Task Two_accounts_of_the_same_provider_coexist_and_are_removed_independently()
+    {
+        var second = new Account("fake:other", "fake", "other", "other@example.com", "Other");
+        _provider.Events["primary"] = [Ev("shared-id")];
+
+        await _engine.AddAccountAsync("fake", Window, CancellationToken.None);
+        _provider.NextAccount = second;
+        await _engine.AddAccountAsync("fake", Window, CancellationToken.None);
+
+        Assert.Equal(2, (await _store.GetAccountsAsync()).Count);
+        var cached = await _store.GetEventsAsync(Day, Utc, enabledCalendarsOnly: false);
+        Assert.Equal([FakeProvider.Account.Id, second.Id], cached.Select(e => e.AccountId).Order());
+
+        await _engine.RemoveAccountAsync(second, CancellationToken.None);
+
+        Assert.Equal([FakeProvider.Account], await _store.GetAccountsAsync());
+        var left = Assert.Single(await _store.GetEventsAsync(Day, Utc, enabledCalendarsOnly: false));
+        Assert.Equal(FakeProvider.Account.Id, left.AccountId);
+    }
+
     private sealed class FakeProvider : ICalendarProvider
     {
         public static readonly Account Account = new("fake:me", "fake", "me", "me@example.com", "Me");
@@ -133,15 +206,17 @@ public sealed class SyncEngineTests : IAsyncLifetime
         public Dictionary<string, List<string?>> StatesSeen { get; } = new();
         public bool RejectStateOnce { get; set; }
         public Exception? SignInError { get; set; }
+        /// <summary>Account returned by the next sign-in (null = <see cref="Account"/>).</summary>
+        public Account? NextAccount { get; set; }
         private readonly Dictionary<string, int> _counter = new();
 
         public string ProviderId => "fake";
 
         public Task<Account> SignInAsync(CancellationToken ct) =>
-            SignInError is null ? Task.FromResult(Account) : Task.FromException<Account>(SignInError);
+            SignInError is null ? Task.FromResult(NextAccount ?? Account) : Task.FromException<Account>(SignInError);
 
         public Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(Account a, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyList<CalendarInfo>>(Calendars.ToList());
+            Task.FromResult<IReadOnlyList<CalendarInfo>>(Calendars.Select(c => c with { AccountId = a.Id }).ToList());
 
         public Task<SyncResult> SyncEventsAsync(Account a, CalendarInfo c, string? syncState, DateRange window,
             CancellationToken ct)
@@ -157,11 +232,19 @@ public sealed class SyncEngineTests : IAsyncLifetime
             }
 
             var n = _counter[c.Id] = _counter.GetValueOrDefault(c.Id) + 1;
-            return Task.FromResult(new SyncResult(Events.GetValueOrDefault(c.Id, []), [], $"state-{c.Id}-{n}",
+            var events = Events.GetValueOrDefault(c.Id, []).Select(e => e with { AccountId = a.Id }).ToList();
+            return Task.FromResult(new SyncResult(events, [], $"state-{c.Id}-{n}",
                 IsFullSync: true));
         }
 
-        public Task SignOutAsync(Account account, CancellationToken ct) => throw new NotSupportedException();
+        public Exception? SignOutError { get; set; }
+        public List<string> SignedOut { get; } = [];
+
+        public Task SignOutAsync(Account account, CancellationToken ct)
+        {
+            SignedOut.Add(account.Id);
+            return SignOutError is null ? Task.CompletedTask : Task.FromException(SignOutError);
+        }
         public Task<CalendarEvent> CreateEventAsync(Account a, CalendarInfo c, EventDraft d, CancellationToken ct) => throw new NotSupportedException();
         public Task<CalendarEvent> UpdateEventAsync(Account a, CalendarEvent e, EventDraft d, CancellationToken ct) => throw new NotSupportedException();
         public Task DeleteEventAsync(Account a, CalendarEvent e, CancellationToken ct) => throw new NotSupportedException();

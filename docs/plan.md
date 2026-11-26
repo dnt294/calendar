@@ -28,7 +28,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 - [ ] **3.1** Microsoft provider: MSAL + WAM, cache DPAPI, list calendars, `calendarView` full sync.
 - [x] **3.2** Sidebar: cây account → calendar, checkbox, màu; lưu trạng thái bật/tắt + màu local.
-- [ ] **3.3** Thêm nhiều account (kể cả 2 Google), xoá account (xoá cache + token).
+- [x] **3.3** Thêm nhiều account (kể cả 2 Google), xoá account (xoá cache + token). _(Xoá + thêm lại kiểm tra với Gmail thật; 2 Google cùng lúc mới kiểm bằng test vì chỉ có 1 tài khoản.)_
   - Xong khi: 3 account hiện cùng lúc, tắt/bật từng calendar đúng.
 
 ## Phase 4 — Offline & sync incremental (~2 buổi)

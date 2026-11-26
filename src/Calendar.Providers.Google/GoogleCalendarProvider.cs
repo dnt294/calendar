@@ -34,14 +34,19 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
 
     // ---- Auth -------------------------------------------------------------------------------
 
-    /// <summary>Opens the browser (loopback redirect). The email is learned from the primary calendar id.</summary>
+    /// <summary>
+    /// Opens the browser (loopback redirect). Always shows the account chooser, so a second Google
+    /// account can be added, and always asks for consent, so Google returns a refresh token even for
+    /// an account that was signed in before. The email is learned from the primary calendar id.
+    /// </summary>
     public async Task<Account> SignInAsync(CancellationToken ct)
     {
         var pendingKey = "pending-" + Guid.NewGuid().ToString("N");
         try
         {
-            var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
-                Secrets, Scopes, pendingKey, ct, _tokens);
+            var flow = CreateFlow(prompt: "select_account consent");
+            var credential = await new AuthorizationCodeInstalledApp(flow, new LocalServerCodeReceiver())
+                .AuthorizeAsync(pendingKey, ct);
 
             using var service = CreateService(credential);
             var primary = await service.CalendarList.Get("primary").ExecuteAsync(ct);
@@ -143,11 +148,12 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
 
     private ClientSecrets Secrets => new() { ClientId = _options.ClientId, ClientSecret = _options.ClientSecret };
 
-    private GoogleAuthorizationCodeFlow CreateFlow() => new(new GoogleAuthorizationCodeFlow.Initializer
+    private GoogleAuthorizationCodeFlow CreateFlow(string? prompt = null) => new(new GoogleAuthorizationCodeFlow.Initializer
     {
         ClientSecrets = Secrets,
         Scopes = Scopes,
         DataStore = _tokens,
+        Prompt = prompt,
     });
 
     private static CalendarService CreateService(UserCredential credential) => new(new BaseClientService.Initializer

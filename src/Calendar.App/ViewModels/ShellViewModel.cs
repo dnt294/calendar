@@ -151,6 +151,33 @@ public sealed partial class ShellViewModel : ObservableObject
         }
     }
 
+    /// <summary>Called after the user confirmed in the dialog.</summary>
+    [RelayCommand]
+    private async Task RemoveAccountAsync(AccountGroupViewModel group)
+    {
+        IsBusy = true;
+        try
+        {
+            var signOutError = await _sync.RemoveAccountAsync(group.Account, CancellationToken.None);
+            await RefreshSidebarAsync();
+            await ReloadAsync();
+            if (signOutError is null)
+                ShowMessage(InfoBarSeverity.Success, $"Đã xoá {group.Email} khỏi app.");
+            else
+                ShowMessage(InfoBarSeverity.Warning,
+                    $"Đã xoá {group.Email} khỏi máy, nhưng chưa thu hồi được quyền trên Google ({signOutError.Message}). " +
+                    "Bạn có thể tự thu hồi tại myaccount.google.com/permissions.");
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(InfoBarSeverity.Error, $"Không xoá được {group.Email}: {ex.Message}");
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private async Task SyncAllAsync()
     {
         IsBusy = true;

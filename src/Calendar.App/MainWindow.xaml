@@ -87,11 +87,35 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:AccountGroupViewModel">
                                         <StackPanel Margin="0,0,0,12">
-                                            <TextBlock Text="{x:Bind Email}"
-                                                       Style="{StaticResource BodyStrongTextBlockStyle}"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       Margin="0,0,0,4"
-                                                       ToolTipService.ToolTip="{x:Bind Email}" />
+                                            <Grid Margin="0,0,0,4">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{x:Bind Email}"
+                                                           Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center"
+                                                           ToolTipService.ToolTip="{x:Bind Email}" />
+                                                <Button Grid.Column="1"
+                                                        Style="{StaticResource SubtleButtonStyle}"
+                                                        Padding="6,4"
+                                                        ToolTipService.ToolTip="Tuỳ chọn tài khoản"
+                                                        AutomationProperties.Name="Tuỳ chọn tài khoản">
+                                                    <FontIcon Glyph="&#xE712;" FontSize="12" />
+                                                    <Button.Flyout>
+                                                        <MenuFlyout Placement="Bottom">
+                                                            <MenuFlyoutItem Text="Xoá tài khoản…"
+                                                                            Tag="{x:Bind}"
+                                                                            Click="OnRemoveAccountClick">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <FontIcon Glyph="&#xE74D;" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                        </MenuFlyout>
+                                                    </Button.Flyout>
+                                                </Button>
+                                            </Grid>
                                             <ItemsControl ItemsSource="{x:Bind Calendars}">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate x:DataType="vm:CalendarItemViewModel">

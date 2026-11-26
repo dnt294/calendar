@@ -62,6 +62,27 @@ public sealed class SyncEngine
         }
     }
 
+    /// <summary>
+    /// Signs the account out at the provider (revoke + forget token), then deletes its calendars,
+    /// events and sync state from the cache. Local data is removed even when sign-out fails
+    /// (offline, already revoked, provider no longer registered).
+    /// </summary>
+    /// <returns>The sign-out error, or null when the provider confirmed it.</returns>
+    public async Task<Exception?> RemoveAccountAsync(Account account, CancellationToken ct)
+    {
+        Exception? signOutError = null;
+        try
+        {
+            await Provider(account.ProviderId).SignOutAsync(account, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            signOutError = ex;
+        }
+        await _store.DeleteAccountAsync(account.Id, ct);
+        return signOutError;
+    }
+
     /// <summary>Syncs every stored account. A failing account does not stop the others.</summary>
     public async Task<IReadOnlyList<AccountSyncResult>> SyncAllAsync(DateRange window, CancellationToken ct)
     {
