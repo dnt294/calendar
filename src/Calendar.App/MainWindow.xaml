@@ -83,6 +83,17 @@
                                   HorizontalAlignment="Center"
                                   ToolTipService.ToolTip="Đang đồng bộ…" />
                 </Grid>
+                <!-- New event (N). Disabled offline: writes are online-only. -->
+                <Button Style="{StaticResource AccentButtonStyle}"
+                        Click="OnNewEventClick"
+                        IsEnabled="{x:Bind ViewModel.CanWrite, Mode=OneWay}"
+                        ToolTipService.ToolTip="Sự kiện mới (N)"
+                        AutomationProperties.Name="Sự kiện mới">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE710;" FontSize="12" />
+                        <TextBlock Text="Mới" />
+                    </StackPanel>
+                </Button>
                 </StackPanel>
             </TitleBar.RightHeader>
         </TitleBar>
@@ -288,18 +299,23 @@
 
             <Grid Margin="0,0,8,0">
                 <!-- Day (1 column) and Week (7 columns) share the time grid. -->
-                <controls:WeekGrid Visibility="{x:Bind ViewModel.IsTimeGridView, Mode=OneWay}"
+                <controls:WeekGrid x:Name="TimeGrid"
+                                   Visibility="{x:Bind ViewModel.IsTimeGridView, Mode=OneWay}"
                                    StartDate="{x:Bind ViewModel.StartDate, Mode=OneWay}"
                                    Days="{x:Bind ViewModel.Days, Mode=OneWay}"
                                    Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
-                                   Events="{x:Bind ViewModel.Events, Mode=OneWay}" />
+                                   Events="{x:Bind ViewModel.Events, Mode=OneWay}"
+                                   EventClicked="OnEventClicked"
+                                   SlotSelected="OnSlotSelected" />
                 <!-- Scrolls continuously through months; reports the month in view back to the view model. -->
                 <controls:MonthGrid Visibility="{x:Bind ViewModel.IsMonthView, Mode=OneWay}"
                                     DisplayMonth="{x:Bind ViewModel.SelectedDate, Mode=OneWay}"
                                     Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
                                     Events="{x:Bind ViewModel.Events, Mode=OneWay}"
                                     DayRequested="OnMonthDayRequested"
-                                    VisibleMonthChanged="OnMonthScrolled" />
+                                    VisibleMonthChanged="OnMonthScrolled"
+                                    EventClicked="OnEventClicked"
+                                    SlotSelected="OnSlotSelected" />
             </Grid>
         </SplitView>
     </Grid>

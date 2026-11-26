@@ -1,5 +1,6 @@
 using Calendar.App.Services;
 using Calendar.App.ViewModels;
+using Calendar.Core.Editing;
 using Calendar.Core.Providers;
 using Calendar.Core.Storage;
 using Calendar.Core.Sync;
@@ -38,7 +39,8 @@ public partial class App : Application
         var coordinator = new SyncCoordinator(
             ct => engine.SyncAllAsync(SyncEngine.DefaultWindow(DateTimeOffset.Now), ct), TimeProvider.System);
 
-        var viewModel = new ShellViewModel(store, engine, coordinator, DispatcherQueue.GetForCurrentThread(), configError);
+        var editor = new EventEditor(store, providers);
+        var viewModel = new ShellViewModel(store, engine, editor, coordinator, DispatcherQueue.GetForCurrentThread(), configError);
         _window = new MainWindow(viewModel);
         _window.Activate();
 

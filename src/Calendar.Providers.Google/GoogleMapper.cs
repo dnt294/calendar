@@ -72,10 +72,74 @@ public static class GoogleMapper
             SelfRsvp = self is not null && !isOrganizer ? self.Status : RsvpStatus.None,
             Attendees = attendees,
             Reminders = Reminders(e.Reminders, defaultReminders),
+            UsesDefaultReminders = e.Reminders is null || e.Reminders.UseDefault == true,
             ETag = e.ETag,
             UpdatedAt = e.UpdatedDateTimeOffset,
         };
     }
+
+    /// <summary>
+    /// Body for Events.insert / Events.patch: only the fields the app edits. Empty strings clear
+    /// location/description on patch; the attendee list replaces the old one, keeping existing
+    /// guests' responses and the owner's own attendee entry.
+    /// </summary>
+    public static Event ToGoogleEvent(EventDraft draft, CalendarEvent? existing = null)
+    {
+        var e = new Event
+        {
+            Summary = draft.Title,
+            Location = draft.Location ?? "",
+            Description = draft.Description ?? "",
+        };
+
+        if (draft.IsAllDay)
+        {
+            var first = DateOnly.FromDateTime(draft.Start.DateTime);
+            var endExclusive = DateOnly.FromDateTime(draft.End.DateTime);
+            e.Start = new EventDateTime { Date = first.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) };
+            e.End = new EventDateTime { Date = endExclusive.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) };
+        }
+        else
+        {
+            e.Start = new EventDateTime { DateTimeDateTimeOffset = draft.Start };
+            e.End = new EventDateTime { DateTimeDateTimeOffset = draft.End };
+        }
+
+        var known = (existing?.Attendees ?? []).ToDictionary(a => a.Email, StringComparer.OrdinalIgnoreCase);
+        var attendees = draft.AttendeeEmails
+            .Select(email => known.TryGetValue(email, out var a)
+                ? new EventAttendee { Email = a.Email, ResponseStatus = FromRsvp(a.Status), Optional = a.IsOptional ? true : null }
+                : new EventAttendee { Email = email, ResponseStatus = "needsAction" })
+            .ToList();
+        if (attendees.Count > 0 && existing?.Attendees.FirstOrDefault(a => a.IsSelf) is { } self)
+            attendees.Insert(0, new EventAttendee { Email = self.Email, ResponseStatus = FromRsvp(self.Status) });
+        // Only touch the guest list when there is or was one, so plain events are not given an empty list.
+        if (attendees.Count > 0 || known.Count > 0)
+            e.Attendees = attendees;
+
+        e.Reminders = draft.UseDefaultReminders
+            ? new Event.RemindersData { UseDefault = true }
+            : new Event.RemindersData
+            {
+                UseDefault = false,
+                Overrides = draft.Reminders
+                    .Select(r => new EventReminder { Method = "popup", Minutes = r.MinutesBefore })
+                    .ToList(),
+            };
+        return e;
+    }
+
+    /// <summary>Guests are emailed when the event has (or had) guests other than the owner.</summary>
+    public static string SendUpdatesFor(EventDraft? draft, CalendarEvent? existing) =>
+        (draft?.AttendeeEmails.Count ?? 0) > 0 || (existing?.Attendees.Any(a => !a.IsSelf) ?? false) ? "all" : "none";
+
+    public static string FromRsvp(RsvpStatus status) => status switch
+    {
+        RsvpStatus.Accepted => "accepted",
+        RsvpStatus.Tentative => "tentative",
+        RsvpStatus.Declined => "declined",
+        _ => "needsAction",
+    };
 
     public static RsvpStatus ToRsvp(string? responseStatus) => responseStatus switch
     {

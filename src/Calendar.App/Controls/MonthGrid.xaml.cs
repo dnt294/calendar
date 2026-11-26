@@ -85,6 +85,12 @@ public sealed partial class MonthGrid : UserControl
     /// <summary>The user scrolled to another month (first day of it).</summary>
     public event EventHandler<DateOnly>? VisibleMonthChanged;
 
+    /// <summary>An event (bar, item or entry of a "+N" list) was clicked.</summary>
+    public event EventHandler<EventClickedEventArgs>? EventClicked;
+
+    /// <summary>Empty space of a day cell was clicked: new all-day event on that day.</summary>
+    public event EventHandler<SlotSelectedEventArgs>? SlotSelected;
+
     // ---- Properties -------------------------------------------------------------------------
 
     public static readonly DependencyProperty DisplayMonthProperty = DependencyProperty.Register(
@@ -251,7 +257,14 @@ public sealed partial class MonthGrid : UserControl
             {
                 BorderBrush = divider,
                 BorderThickness = new Thickness(d == 0 ? 0 : 1, 0, 0, 1),
-                Background = isWeekend ? Brush("SubtleFillColorSecondaryBrush") : null,
+                // Transparent (not null) so the empty part of the cell receives clicks.
+                Background = isWeekend ? Brush("SubtleFillColorSecondaryBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            };
+            var cellDay = day;
+            cell.Tapped += (_, _) =>
+            {
+                var (s, e) = CalendarEvent.AllDaySpan(cellDay, cellDay);
+                SlotSelected?.Invoke(this, new SlotSelectedEventArgs(s, e, true, cell));
             };
             Grid.SetColumn(cell, d);
             Grid.SetRowSpan(cell, lanes + 2);
@@ -269,6 +282,7 @@ public sealed partial class MonthGrid : UserControl
             var color = ColorHex.Parse(_colors.GetValueOrDefault((bar.Event.AccountId, bar.Event.CalendarId)));
             FrameworkElement element = bar.IsBlock ? BlockBar(bar, color) : TimedItem(bar.Event, color);
             ToolTipService.SetToolTip(element, Describe(bar.Event));
+            AttachClick(element, bar.Event);
             Grid.SetRow(element, bar.Lane + 1);
             Grid.SetColumn(element, bar.FirstColumn);
             Grid.SetColumnSpan(element, bar.ColumnSpan);
@@ -361,7 +375,9 @@ public sealed partial class MonthGrid : UserControl
             if (ev.IsAllDay)
                 ((TextBlock)item.Children[1]).Text = ev.Title;
             item.Margin = new Thickness(0);
+            item.Padding = new Thickness(4, 2, 4, 2);
             ToolTipService.SetToolTip(item, Describe(ev));
+            AttachClick(item, ev, fromMoreList: true);
             list.Children.Add(item);
         }
 
@@ -377,10 +393,32 @@ public sealed partial class MonthGrid : UserControl
             HorizontalAlignment = HorizontalAlignment.Left,
             Flyout = new Flyout { Content = list, Placement = FlyoutPlacementMode.Bottom },
         };
+        button.Click += (_, _) => _openMoreButton = button;
         // The line kept free by MonthLayout is the last lane.
         Grid.SetRow(button, lanes);
         Grid.SetColumn(button, column);
         return button;
+    }
+
+    private Button? _openMoreButton;
+
+    /// <summary>Clicking an event opens its details; the click must not also count as a click on the cell.</summary>
+    private void AttachClick(FrameworkElement element, CalendarEvent ev, bool fromMoreList = false)
+    {
+        if (element is Panel panel)
+            panel.Background ??= new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        element.Tapped += (_, e) =>
+        {
+            e.Handled = true;
+            var anchor = element;
+            if (fromMoreList && _openMoreButton is { } more)
+            {
+                // Close the list first; the details then open at the day's "+N" button.
+                more.Flyout?.Hide();
+                anchor = more;
+            }
+            EventClicked?.Invoke(this, new EventClickedEventArgs(ev, anchor));
+        };
     }
 
     private static string Describe(CalendarEvent ev)

@@ -8,7 +8,7 @@ namespace Calendar.Core.Storage;
 /// <summary>SQLite implementation of <see cref="ICalendarStore"/>. One connection per operation.</summary>
 public sealed class SqliteCalendarStore : ICalendarStore
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -31,14 +31,33 @@ public sealed class SqliteCalendarStore : ICalendarStore
         var version = Convert.ToInt32(await ScalarAsync(conn, null, "PRAGMA user_version;", ct));
         if (version > SchemaVersion)
             throw new InvalidOperationException($"Database schema v{version} is newer than this app (v{SchemaVersion}).");
-        if (version == SchemaVersion)
-            return;
+        if (version == 0)
+        {
+            await CreateV1Async(conn, ct);
+            version = 1;
+        }
+        if (version == 1)
+        {
+            // v2: remember whether an event uses its calendar's default reminders, so editing it does
+            // not silently turn defaults into custom reminders. Existing rows cannot know: forget the
+            // sync state so the next sync is a full one and rewrites every event with the right flag.
+            await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(ct);
+            await ExecAsync(conn, tx, """
+                ALTER TABLE events ADD COLUMN uses_default_reminders INTEGER NOT NULL DEFAULT 0;
+                DELETE FROM sync_state;
+                PRAGMA user_version = 2;
+                """, ct);
+            await tx.CommitAsync(ct);
+        }
+    }
 
+    private static async Task CreateV1Async(SqliteConnection conn, CancellationToken ct)
+    {
         // journal_mode cannot be changed inside a transaction; it is persisted in the file.
         await ExecAsync(conn, null, "PRAGMA journal_mode = WAL;", ct);
 
         await using var tx = (SqliteTransaction)await conn.BeginTransactionAsync(ct);
-        await ExecAsync(conn, tx, $"""
+        await ExecAsync(conn, tx, """
             CREATE TABLE accounts (
                 id                  TEXT PRIMARY KEY,
                 provider_id         TEXT NOT NULL,
@@ -93,7 +112,7 @@ public sealed class SqliteCalendarStore : ICalendarStore
                 FOREIGN KEY (account_id, calendar_id) REFERENCES calendars(account_id, id) ON DELETE CASCADE
             );
 
-            PRAGMA user_version = {SchemaVersion};
+            PRAGMA user_version = 1;
             """, ct);
         await tx.CommitAsync(ct);
     }
@@ -287,7 +306,7 @@ public sealed class SqliteCalendarStore : ICalendarStore
             SELECT e.account_id, e.calendar_id, e.id, e.title, e.start_ms, e.start_offset_min, e.end_ms,
                    e.end_offset_min, e.is_all_day, e.location, e.description, e.series_id, e.meeting_url,
                    e.organizer_email, e.is_organizer, e.self_rsvp, e.attendees_json, e.reminders_json,
-                   e.etag, e.updated_ms
+                   e.etag, e.updated_ms, e.uses_default_reminders
             FROM events e
             JOIN calendars c ON c.account_id = e.account_id AND c.id = e.calendar_id
             WHERE ((e.is_all_day = 0 AND e.start_ms < $end AND (e.end_ms > $start OR e.start_ms >= $start))
@@ -322,6 +341,7 @@ public sealed class SqliteCalendarStore : ICalendarStore
                 Reminders = JsonSerializer.Deserialize<List<Reminder>>(r.GetString(17), Json) ?? [],
                 ETag = NullableString(r, 18),
                 UpdatedAt = r.IsDBNull(19) ? null : DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(19)),
+                UsesDefaultReminders = r.GetBoolean(20),
             });
         }
         return list;
@@ -335,9 +355,10 @@ public sealed class SqliteCalendarStore : ICalendarStore
             INSERT OR REPLACE INTO events (
                 account_id, calendar_id, id, title, start_ms, start_offset_min, end_ms, end_offset_min,
                 is_all_day, location, description, series_id, meeting_url, organizer_email, is_organizer,
-                self_rsvp, attendees_json, reminders_json, etag, updated_ms)
+                self_rsvp, attendees_json, reminders_json, etag, updated_ms, uses_default_reminders)
             VALUES ($a, $c, $id, $title, $startMs, $startOff, $endMs, $endOff, $allDay, $location, $description,
-                $series, $meeting, $organizer, $isOrganizer, $rsvp, $attendees, $reminders, $etag, $updated);
+                $series, $meeting, $organizer, $isOrganizer, $rsvp, $attendees, $reminders, $etag, $updated,
+                $defaultReminders);
             """, ct,
             ("$a", ev.AccountId), ("$c", ev.CalendarId), ("$id", ev.Id), ("$title", ev.Title),
             ("$startMs", ev.Start.ToUnixTimeMilliseconds()), ("$startOff", (int)ev.Start.Offset.TotalMinutes),
@@ -347,7 +368,8 @@ public sealed class SqliteCalendarStore : ICalendarStore
             ("$isOrganizer", ev.IsOrganizer), ("$rsvp", (int)ev.SelfRsvp),
             ("$attendees", JsonSerializer.Serialize(ev.Attendees, Json)),
             ("$reminders", JsonSerializer.Serialize(ev.Reminders, Json)),
-            ("$etag", ev.ETag), ("$updated", ev.UpdatedAt?.ToUnixTimeMilliseconds()));
+            ("$etag", ev.ETag), ("$updated", ev.UpdatedAt?.ToUnixTimeMilliseconds()),
+            ("$defaultReminders", ev.UsesDefaultReminders));
 
     private static long ToFloatingMs(DateTimeOffset local) =>
         new DateTimeOffset(local.DateTime, TimeSpan.Zero).ToUnixTimeMilliseconds();

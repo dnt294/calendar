@@ -41,6 +41,12 @@ public sealed record CalendarEvent
     public IReadOnlyList<Attendee> Attendees { get; init; } = [];
     public IReadOnlyList<Reminder> Reminders { get; init; } = [];
 
+    /// <summary>
+    /// The event follows its calendar's default reminders; <see cref="Reminders"/> then holds those
+    /// defaults as resolved at sync time.
+    /// </summary>
+    public bool UsesDefaultReminders { get; init; }
+
     /// <summary>Provider concurrency token (Google etag / Graph changeKey).</summary>
     public string? ETag { get; init; }
     public DateTimeOffset? UpdatedAt { get; init; }

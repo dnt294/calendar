@@ -182,13 +182,57 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
     // ---- Write (Phase 6 / 7) ----------------------------------------------------------------
 
     public Task<CalendarEvent> CreateEventAsync(Account account, CalendarInfo calendar, EventDraft draft,
-        CancellationToken ct) => throw new NotSupportedException("Tạo event: task 6.2.");
+        CancellationToken ct) =>
+        WithService(account, ct, async service =>
+        {
+            var request = service.Events.Insert(GoogleMapper.ToGoogleEvent(draft), calendar.Id);
+            request.SendUpdates = SendUpdates<EventsResource.InsertRequest.SendUpdatesEnum>(GoogleMapper.SendUpdatesFor(draft, null));
+            var created = await request.ExecuteAsync(ct);
+            return await MapWrittenAsync(service, account, calendar.Id, created, ct);
+        });
 
+    /// <summary>PATCH, so fields the app does not edit (conference link, color, visibility…) are kept.
+    /// For an occurrence, <see cref="CalendarEvent.Id"/> is the instance id: only that instance changes.</summary>
     public Task<CalendarEvent> UpdateEventAsync(Account account, CalendarEvent ev, EventDraft draft,
-        CancellationToken ct) => throw new NotSupportedException("Sửa event: task 6.4.");
+        CancellationToken ct) =>
+        WithService(account, ct, async service =>
+        {
+            var request = service.Events.Patch(GoogleMapper.ToGoogleEvent(draft, ev), ev.CalendarId, ev.Id);
+            request.SendUpdates = SendUpdates<EventsResource.PatchRequest.SendUpdatesEnum>(GoogleMapper.SendUpdatesFor(draft, ev));
+            var updated = await request.ExecuteAsync(ct);
+            return await MapWrittenAsync(service, account, ev.CalendarId, updated, ct);
+        });
 
+    /// <summary>For an occurrence only that instance is cancelled; the rest of the series stays.</summary>
     public Task DeleteEventAsync(Account account, CalendarEvent ev, CancellationToken ct) =>
-        throw new NotSupportedException("Xoá event: task 6.4.");
+        WithService(account, ct, async service =>
+        {
+            var request = service.Events.Delete(ev.CalendarId, ev.Id);
+            request.SendUpdates = SendUpdates<EventsResource.DeleteRequest.SendUpdatesEnum>(GoogleMapper.SendUpdatesFor(null, ev));
+            try
+            {
+                await request.ExecuteAsync(ct);
+            }
+            catch (GoogleApiException ex) when (ex.HttpStatusCode is HttpStatusCode.Gone or HttpStatusCode.NotFound)
+            {
+                // Already deleted elsewhere: the goal is reached.
+            }
+            return true;
+        });
+
+    /// <summary>Each Google request type has its own SendUpdates enum with the same members.</summary>
+    private static T SendUpdates<T>(string value) where T : struct, Enum => Enum.Parse<T>(value == "all" ? "All" : "None");
+
+    /// <summary>Maps a write response; default reminders are not in it, so they are read from the calendar.</summary>
+    private static async Task<CalendarEvent> MapWrittenAsync(CalendarService service, Account account, string calendarId,
+        Event written, CancellationToken ct)
+    {
+        IList<EventReminder>? defaults = null;
+        if (written.Reminders is null || written.Reminders.UseDefault == true)
+            defaults = (await service.CalendarList.Get(calendarId).ExecuteAsync(ct)).DefaultReminders;
+        return GoogleMapper.ToEvent(written, account.Id, calendarId, defaults)
+               ?? throw new InvalidOperationException($"Google returned event '{written.Id}' as cancelled.");
+    }
 
     public Task RespondAsync(Account account, CalendarEvent ev, RsvpStatus status, CancellationToken ct) =>
         throw new NotSupportedException("RSVP: task 7.1.");

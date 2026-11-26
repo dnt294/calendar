@@ -45,9 +45,9 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 6 — Tạo / sửa / xoá (~3 buổi)
 
-- [ ] **6.1** Flyout chi tiết event (đọc). **6.2** Quick create. **6.3** Editor đầy đủ (chọn calendar theo account, khách mời gõ email, nhắc trước).
-- [ ] **6.4** Update/Delete cho cả 2 provider; occurrence của event lặp chỉ sửa/xoá lần đó.
-- [ ] **6.5** Disable thao tác ghi khi offline.
+- [x] **6.1** Flyout chi tiết event (đọc). **6.2** Quick create. **6.3** Editor đầy đủ (chọn calendar theo account, khách mời gõ email, nhắc trước).
+- [x] **6.4** Update/Delete cho cả 2 provider; occurrence của event lặp chỉ sửa/xoá lần đó.
+- [x] **6.5** Disable thao tác ghi khi offline.
   - Xong khi: tạo/sửa/xoá trên app → thấy đúng trên web Google Calendar và Outlook web, và ngược lại.
 
 ## Phase 7 — RSVP (~1 buổi)

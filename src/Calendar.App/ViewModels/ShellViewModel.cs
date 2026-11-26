@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using Calendar.App.Helpers;
+using Calendar.Core.Editing;
 using Calendar.Core.Layout;
 using Calendar.Core.Models;
 using Calendar.Core.Providers;
@@ -33,6 +35,7 @@ public sealed partial class ShellViewModel : ObservableObject
 
     private readonly ICalendarStore _store;
     private readonly SyncEngine _engine;
+    private readonly EventEditor _editor;
     private readonly SyncCoordinator _sync;
     private readonly DispatcherQueue _dispatcher;
     private readonly string? _configError;
@@ -40,11 +43,12 @@ public sealed partial class ShellViewModel : ObservableObject
     private bool _initialized;
     private int _handledRuns;
 
-    public ShellViewModel(ICalendarStore store, SyncEngine engine, SyncCoordinator sync, DispatcherQueue dispatcher,
-        string? configError)
+    public ShellViewModel(ICalendarStore store, SyncEngine engine, EventEditor editor, SyncCoordinator sync,
+        DispatcherQueue dispatcher, string? configError)
     {
         _store = store;
         _engine = engine;
+        _editor = editor;
         _sync = sync;
         _dispatcher = dispatcher;
         _configError = configError;
@@ -104,8 +108,33 @@ public sealed partial class ShellViewModel : ObservableObject
     public bool IsNotSyncing => !IsSyncing;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsOnline))]
+    [NotifyPropertyChangedFor(nameof(IsOnline), nameof(CanWrite), nameof(WriteDisabledReason))]
     public partial bool IsOffline { get; set; }
+
+    /// <summary>Calendars new events can go to (writable ones of every account).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanWrite), nameof(WriteDisabledReason))]
+    public partial IReadOnlyList<CalendarChoice> WritableCalendars { get; set; } = [];
+
+    /// <summary>Edits are online-only (spec): disabled while offline or without a writable calendar.</summary>
+    public bool CanWrite => !IsOffline && WritableCalendars.Count > 0;
+
+    public string WriteDisabledReason => IsOffline ? "Cần kết nối mạng" : WritableCalendars.Count == 0 ? "Chưa có lịch nào ghi được" : "";
+
+    private IReadOnlyList<CalendarChoice> _allCalendars = [];
+    private CalendarChoice? _lastUsedCalendar;
+
+    /// <summary>Calendar preselected for a new event: the last one used, else the first primary calendar.</summary>
+    public CalendarChoice? DefaultCalendar =>
+        WritableCalendars.FirstOrDefault(c => _lastUsedCalendar is { } last
+                                              && c.Calendar.AccountId == last.Calendar.AccountId
+                                              && c.Calendar.Id == last.Calendar.Id)
+        ?? WritableCalendars.FirstOrDefault(c => c.Calendar.IsPrimary)
+        ?? WritableCalendars.FirstOrDefault();
+
+    /// <summary>Calendar (and account) an event belongs to, including read-only calendars.</summary>
+    public CalendarChoice? CalendarOf(CalendarEvent ev) =>
+        _allCalendars.FirstOrDefault(c => c.Calendar.AccountId == ev.AccountId && c.Calendar.Id == ev.CalendarId);
 
     public bool IsOnline => !IsOffline;
 
@@ -385,6 +414,71 @@ public sealed partial class ShellViewModel : ObservableObject
             Accounts.Add(new AccountGroupViewModel(account, items));
         }
         HasNoAccounts = Accounts.Count == 0;
+
+        var emails = accounts.ToDictionary(a => a.Id, a => a.Email);
+        _allCalendars = calendars
+            .Where(c => emails.ContainsKey(c.AccountId))
+            .Select(c => new CalendarChoice(c, emails[c.AccountId]))
+            .ToList();
+        WritableCalendars = _allCalendars.Where(c => c.Calendar.CanEdit).ToList();
+    }
+
+    // ---- Create / edit / delete (Phase 6) ---------------------------------------------------
+
+    /// <summary>Tells the user why a write action is not available (task 6.5).</summary>
+    public void ExplainWriteDisabled() =>
+        ShowMessage(InfoBarSeverity.Warning, IsOffline
+            ? "Đang offline: tạo/sửa/xoá cần kết nối mạng."
+            : "Chưa có lịch nào ghi được. Thêm tài khoản trước.");
+
+    public Task<bool> CreateEventAsync(CalendarChoice calendar, EventDraft draft)
+    {
+        _lastUsedCalendar = calendar;
+        return RunWriteAsync(ct => _editor.CreateAsync(calendar.Calendar, draft, ct), $"Đã tạo \"{draft.Title}\".");
+    }
+
+    public Task<bool> UpdateEventAsync(CalendarEvent ev, EventDraft draft) =>
+        RunWriteAsync(ct => _editor.UpdateAsync(ev, draft, ct), $"Đã lưu \"{draft.Title}\".");
+
+    public Task<bool> DeleteEventAsync(CalendarEvent ev) =>
+        RunWriteAsync(async ct => { await _editor.DeleteAsync(ev, ct); return true; }, $"Đã xoá \"{ev.Title}\".");
+
+    /// <summary>
+    /// Online-only write, never overlapping a sync. On success the view reloads from the cache the
+    /// editor just updated; on failure nothing changes locally and the reason is shown.
+    /// </summary>
+    private async Task<bool> RunWriteAsync<T>(Func<CancellationToken, Task<T>> write, string successMessage)
+    {
+        if (IsOffline)
+        {
+            ShowMessage(InfoBarSeverity.Warning, "Đang offline: tạo/sửa/xoá cần kết nối mạng.");
+            return false;
+        }
+        try
+        {
+            await _sync.RunExclusiveAsync(write, CancellationToken.None);
+            await ReloadAsync();
+            ShowMessage(InfoBarSeverity.Success, successMessage);
+            return true;
+        }
+        catch (InvalidDraftException ex)
+        {
+            ShowMessage(InfoBarSeverity.Error, string.Join("\n", ex.Problems.Select(EventText.Problem)));
+        }
+        catch (ReauthenticationRequiredException)
+        {
+            ShowMessage(InfoBarSeverity.Warning, "Tài khoản cần đăng nhập lại trước khi sửa lịch.");
+            _ = _sync.SyncNowAsync(); // brings up the sign-in prompt
+        }
+        catch (Exception ex) when (SyncErrors.IsNetworkError(ex))
+        {
+            ShowMessage(InfoBarSeverity.Warning, "Không kết nối được tới máy chủ. Thay đổi chưa được lưu.");
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(InfoBarSeverity.Error, $"Không lưu được thay đổi: {ex.Message}");
+        }
+        return false;
     }
 
     /// <summary>Checkbox or color changed in the sidebar: save locally, then redraw the grid.</summary>

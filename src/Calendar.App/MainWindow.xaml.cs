@@ -1,7 +1,12 @@
+using Calendar.App.Controls;
+using Calendar.App.Helpers;
 using Calendar.App.ViewModels;
+using Calendar.App.Views;
 using Calendar.Core.Layout;
+using Calendar.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.System;
@@ -85,6 +90,132 @@ public sealed partial class MainWindow : Window
 
     private void OnMonthScrolled(object? sender, DateOnly month) => ViewModel.OnMonthScrolled(month);
 
+    // ---- Events: details, quick create, editor, delete (Phase 6) ----------------------------
+
+    private bool _dialogOpen;
+
+    private void OnEventClicked(object? sender, EventClickedEventArgs e)
+    {
+        var ev = e.Event;
+        var flyout = new Flyout();
+        var panel = new EventDetailsPanel(ev, ViewModel.CalendarOf(ev), ViewModel.CanWrite, ViewModel.WriteDisabledReason,
+            onEdit: () => { flyout.Hide(); _ = EditAsync(ev); },
+            onDelete: () => { flyout.Hide(); _ = ConfirmDeleteAsync(ev); });
+        // Delete key deletes the event whose details are open (ui.md shortcuts).
+        panel.KeyDown += (_, k) =>
+        {
+            if (k.Key == VirtualKey.Delete && ViewModel.CanWrite && ViewModel.CalendarOf(ev)?.Calendar.CanEdit == true)
+            {
+                k.Handled = true;
+                flyout.Hide();
+                _ = ConfirmDeleteAsync(ev);
+            }
+        };
+        flyout.Content = panel;
+        flyout.ShowAt(e.Anchor, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Auto });
+    }
+
+    private void OnSlotSelected(object? sender, SlotSelectedEventArgs e)
+    {
+        if (!ViewModel.CanWrite)
+        {
+            TimeGrid.ClearSelection();
+            ViewModel.ExplainWriteDisabled();
+            return;
+        }
+
+        var flyout = new Flyout();
+        EventDraft Draft(string title) => new() { Title = title, Start = e.Start, End = e.End, IsAllDay = e.IsAllDay };
+        flyout.Content = new QuickCreatePanel(e.Start, e.End, e.IsAllDay, ViewModel.WritableCalendars, ViewModel.DefaultCalendar,
+            onSave: (title, calendar) =>
+            {
+                flyout.Hide();
+                _ = ViewModel.CreateEventAsync(calendar, Draft(title));
+            },
+            onMoreDetails: (title, calendar) =>
+            {
+                flyout.Hide();
+                _ = CreateWithEditorAsync(Draft(title), calendar);
+            });
+        flyout.Closed += (_, _) => TimeGrid.ClearSelection();
+        flyout.ShowAt(e.Anchor, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Auto });
+    }
+
+    private void OnNewEventClick(object sender, RoutedEventArgs e) => _ = NewEventAsync();
+
+    /// <summary>"+ Mới" / N: on the selected day, at the next half hour if that day is today, else 9:00.</summary>
+    private Task NewEventAsync()
+    {
+        if (!ViewModel.CanWrite)
+        {
+            ViewModel.ExplainWriteDisabled();
+            return Task.CompletedTask;
+        }
+        var next = LocalTime.NextHalfHour();
+        var start = ViewModel.SelectedDate == DateOnly.FromDateTime(next.DateTime)
+            ? next
+            : LocalTime.At(ViewModel.SelectedDate, TimeSpan.FromHours(9));
+        return CreateWithEditorAsync(new EventDraft { Title = "", Start = start, End = start.AddHours(1) }, ViewModel.DefaultCalendar);
+    }
+
+    private async Task CreateWithEditorAsync(EventDraft draft, CalendarChoice? calendar)
+    {
+        var dialog = new EventEditorDialog(Content.XamlRoot, "Sự kiện mới", draft, ViewModel.WritableCalendars,
+            calendar ?? ViewModel.DefaultCalendar, calendarLocked: false, note: null);
+        if (await ShowDialogAsync(dialog) && dialog.Result is { } result && dialog.SelectedCalendar is { } chosen)
+            await ViewModel.CreateEventAsync(chosen, result);
+    }
+
+    private async Task EditAsync(CalendarEvent ev)
+    {
+        var calendar = ViewModel.CalendarOf(ev);
+        var note = ev.IsOccurrence
+            ? $"Sự kiện lặp: chỉ sửa lần này ({ev.Start.ToLocalTime().ToString("D", System.Globalization.CultureInfo.CurrentCulture)})."
+            : null;
+        var dialog = new EventEditorDialog(Content.XamlRoot, "Sửa sự kiện", EventDraft.FromEvent(ev),
+            calendar is null ? Array.Empty<CalendarChoice>() : new[] { calendar }, calendar, calendarLocked: true, note);
+        if (await ShowDialogAsync(dialog) && dialog.Result is { } result)
+            await ViewModel.UpdateEventAsync(ev, result);
+    }
+
+    private async Task ConfirmDeleteAsync(CalendarEvent ev)
+    {
+        var when = EventText.When(ev);
+        var text = ev.IsOccurrence
+            ? $"Chỉ xoá lần này ({when}).\nCác lần khác của sự kiện lặp vẫn giữ nguyên."
+            : $"Xoá \"{ev.Title}\" ({when})?";
+        if (ev.Attendees.Any(a => !a.IsSelf))
+            text += "\n\nKhách mời sẽ nhận email thông báo huỷ.";
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = ev.IsOccurrence ? "Xoá lần này?" : "Xoá sự kiện?",
+            Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = "Xoá",
+            CloseButtonText = "Huỷ",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await ShowDialogAsync(dialog))
+            await ViewModel.DeleteEventAsync(ev);
+    }
+
+    /// <summary>Only one ContentDialog may be open at a time; a second request is ignored.</summary>
+    private async Task<bool> ShowDialogAsync(ContentDialog dialog)
+    {
+        if (_dialogOpen)
+            return false;
+        _dialogOpen = true;
+        try
+        {
+            return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        }
+        finally
+        {
+            _dialogOpen = false;
+        }
+    }
+
     // ---- Keyboard shortcuts (ui.md): T today, D/W/M view, ←/→ previous/next ----------------
 
     private void AddShortcuts()
@@ -95,6 +226,7 @@ public sealed partial class MainWindow : Window
         Add(VirtualKey.M, arrowKey: false, () => ViewModel.ViewMode = CalendarViewMode.Month);
         Add(VirtualKey.Left, arrowKey: true, () => ViewModel.PreviousCommand.Execute(null));
         Add(VirtualKey.Right, arrowKey: true, () => ViewModel.NextCommand.Execute(null));
+        Add(VirtualKey.N, arrowKey: false, () => _ = NewEventAsync());
 
         void Add(VirtualKey key, bool arrowKey, Action action)
         {

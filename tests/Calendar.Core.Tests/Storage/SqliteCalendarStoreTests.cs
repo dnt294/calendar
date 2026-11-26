@@ -83,6 +83,7 @@ public sealed class SqliteCalendarStoreTests : IAsyncLifetime
             ],
             Reminders = [new Reminder(5), new Reminder(30)],
             ETag = "\"etag\"",
+            UsesDefaultReminders = true,
             UpdatedAt = new DateTimeOffset(2026, 11, 20, 1, 2, 3, TimeSpan.Zero),
         };
         await _store.ApplySyncResultAsync(Gmail.Id, Personal.Id, Full(ev));
@@ -96,6 +97,31 @@ public sealed class SqliteCalendarStoreTests : IAsyncLifetime
         Assert.Equal(ev with { Attendees = loaded.Attendees, Reminders = loaded.Reminders }, loaded);
     }
 
+    [Fact]
+    public async Task Migration_from_v1_adds_column_and_forces_a_full_resync()
+    {
+        var t = new DateTimeOffset(2026, 11, 23, 9, 0, 0, Plus7);
+        await _store.ApplySyncResultAsync(Gmail.Id, Personal.Id, Full(Timed("old", t, TimeSpan.FromHours(1))));
+
+        // Turn the database back into a v1 file.
+        await using (var conn = new SqliteConnection($"Data Source={_path}"))
+        {
+            await conn.OpenAsync();
+            var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE events DROP COLUMN uses_default_reminders; PRAGMA user_version = 1;";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // Pooled connections still hold the old schema in memory; a real upgrade starts with fresh ones.
+        SqliteConnection.ClearAllPools();
+        await new SqliteCalendarStore(_path).InitializeAsync();
+
+        var ev = Assert.Single(await EventsOn(new DateOnly(2026, 11, 23), Hanoi));
+        Assert.False(ev.UsesDefaultReminders);
+        Assert.Null(await _store.GetSyncStateAsync(Gmail.Id, Personal.Id));
+        await _store.UpsertEventAsync(ev with { UsesDefaultReminders = true });
+        Assert.True(Assert.Single(await EventsOn(new DateOnly(2026, 11, 23), Hanoi)).UsesDefaultReminders);
+    }
     [Fact]
     public async Task Range_query_is_half_open_for_timed_events()
     {

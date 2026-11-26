@@ -25,6 +25,23 @@ public sealed partial class WeekGrid : UserControl
 
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromMinutes(1) };
     private readonly List<Canvas> _dayCanvases = [];
+    private static readonly TimeSpan SnapStep = TimeSpan.FromMinutes(15);
+    private Border? _selection;
+    private (Canvas Canvas, double StartY)? _drag;
+
+    /// <summary>An event block was clicked.</summary>
+    public event EventHandler<EventClickedEventArgs>? EventClicked;
+
+    /// <summary>Empty time (or the all-day band) was clicked or dragged over.</summary>
+    public event EventHandler<SlotSelectedEventArgs>? SlotSelected;
+
+    /// <summary>Removes the highlighted slot (call when the quick-create flyout closes).</summary>
+    public void ClearSelection()
+    {
+        if (_selection?.Parent is Canvas parent)
+            parent.Children.Remove(_selection);
+        _selection = null;
+    }
     private Rectangle? _nowLine;
     private Ellipse? _nowDot;
     private bool _scrolledInitially;
@@ -201,6 +218,21 @@ public sealed partial class WeekGrid : UserControl
         };
         AllDayGrid.Children.Add(label);
 
+        // Transparent hit targets per day (behind the bars): click → new all-day event on that day.
+        for (var i = 0; i < days; i++)
+        {
+            var day = StartDate.AddDays(i);
+            var target = new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+            target.Tapped += (_, _) =>
+            {
+                var (s, e) = CalendarEvent.AllDaySpan(day, day);
+                SlotSelected?.Invoke(this, new SlotSelectedEventArgs(s, e, true, target));
+            };
+            Grid.SetColumn(target, i + 1);
+            Grid.SetRowSpan(target, Math.Max(1, layout.RowCount));
+            AllDayGrid.Children.Add(target);
+        }
+
         foreach (var item in layout.Items)
         {
             var color = ColorHex.Parse(colors.GetValueOrDefault((item.Event.AccountId, item.Event.CalendarId)));
@@ -222,6 +254,12 @@ public sealed partial class WeekGrid : UserControl
                 },
             };
             ToolTipService.SetToolTip(block, item.Event.Title);
+            var clicked = item.Event;
+            block.Tapped += (_, e) =>
+            {
+                e.Handled = true;
+                EventClicked?.Invoke(this, new EventClickedEventArgs(clicked, block));
+            };
             Grid.SetRow(block, item.Row);
             Grid.SetColumn(block, item.FirstColumn + 1);
             Grid.SetColumnSpan(block, item.ColumnSpan);
@@ -281,7 +319,12 @@ public sealed partial class WeekGrid : UserControl
             Grid.SetRowSpan(column, 24);
             BodyGrid.Children.Add(column);
 
-            var canvas = new Canvas { Tag = day };
+            // Transparent background so empty time receives clicks (a null background is not hit-tested).
+            var canvas = new Canvas { Tag = day, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+            canvas.PointerPressed += OnCanvasPointerPressed;
+            canvas.PointerMoved += OnCanvasPointerMoved;
+            canvas.PointerReleased += OnCanvasPointerReleased;
+            canvas.PointerCaptureLost += (_, _) => _drag = null;
             Grid.SetColumn(canvas, i + 1);
             Grid.SetRowSpan(canvas, 24);
             BodyGrid.Children.Add(canvas);
@@ -340,6 +383,13 @@ public sealed partial class WeekGrid : UserControl
             Child = content,
         };
         ToolTipService.SetToolTip(block, string.IsNullOrEmpty(ev.Location) ? $"{ev.Title}\n{time}" : $"{ev.Title}\n{time}\n{ev.Location}");
+        // Pressing an event must not start a slot drag on the canvas underneath.
+        block.PointerPressed += (_, e) => e.Handled = true;
+        block.Tapped += (_, e) =>
+        {
+            e.Handled = true;
+            EventClicked?.Invoke(this, new EventClickedEventArgs(ev, block));
+        };
         Canvas.SetTop(block, top);
         return block;
     }
@@ -382,6 +432,85 @@ public sealed partial class WeekGrid : UserControl
         Canvas.SetLeft(_nowDot, -5);
         canvas.Children.Add(_nowLine);
         canvas.Children.Add(_nowDot);
+    }
+
+    // ---- Slot selection ---------------------------------------------------------------------
+
+    private void OnCanvasPointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        var canvas = (Canvas)sender;
+        if (!e.GetCurrentPoint(canvas).Properties.IsLeftButtonPressed)
+            return;
+        ClearSelection();
+        var y = e.GetCurrentPoint(canvas).Position.Y;
+        _drag = (canvas, y);
+        canvas.CapturePointer(e.Pointer);
+        ShowSelection(canvas, y, y);
+        e.Handled = true;
+    }
+
+    private void OnCanvasPointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_drag is not { } drag || !ReferenceEquals(sender, drag.Canvas))
+            return;
+        ShowSelection(drag.Canvas, drag.StartY, e.GetCurrentPoint(drag.Canvas).Position.Y);
+    }
+
+    private void OnCanvasPointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_drag is not { } drag || !ReferenceEquals(sender, drag.Canvas))
+            return;
+        _drag = null;
+        drag.Canvas.ReleasePointerCapture(e.Pointer);
+        var (start, end) = SlotRange(drag.StartY, e.GetCurrentPoint(drag.Canvas).Position.Y);
+        ShowSelection(drag.Canvas, start, end);
+        var day = (DateOnly)drag.Canvas.Tag;
+        SlotSelected?.Invoke(this, new SlotSelectedEventArgs(
+            LocalTime.At(day, start), LocalTime.At(day, end), false, _selection!));
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Snapped time range for a press at <paramref name="y1"/> released at <paramref name="y2"/>:
+    /// a plain click gives one hour starting at the half hour clicked, a drag gives the dragged range.
+    /// </summary>
+    private (TimeSpan Start, TimeSpan End) SlotRange(double y1, double y2)
+    {
+        TimeSpan At(double y, TimeSpan step) => TimeSpan.FromMinutes(
+            Math.Clamp(Math.Floor(y / HourHeight * 60 / step.TotalMinutes) * step.TotalMinutes, 0, DayTimeline.MinutesPerDay));
+
+        var day = TimeSpan.FromDays(1);
+        if (Math.Abs(y2 - y1) < HourHeight / 8)
+        {
+            var start = At(y1, TimeSpan.FromMinutes(30));
+            return (start, start + TimeSpan.FromHours(1) > day ? day : start + TimeSpan.FromHours(1));
+        }
+        var a = At(Math.Min(y1, y2), SnapStep);
+        var b = At(Math.Max(y1, y2), SnapStep) + SnapStep;
+        return (a, b > day ? day : b);
+    }
+
+    private void ShowSelection(Canvas canvas, double y1, double y2) => ShowSelection(canvas, SlotRange(y1, y2).Start, SlotRange(y1, y2).End);
+
+    private void ShowSelection(Canvas canvas, TimeSpan start, TimeSpan end)
+    {
+        if (_selection is null || !ReferenceEquals(_selection.Parent, canvas))
+        {
+            ClearSelection();
+            _selection = new Border
+            {
+                Background = new SolidColorBrush(ColorHex.WithAlpha(((SolidColorBrush)Brush("AccentFillColorDefaultBrush")).Color, 0x50)),
+                BorderBrush = Brush("AccentFillColorDefaultBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                IsHitTestVisible = false,
+            };
+            canvas.Children.Add(_selection);
+        }
+        Canvas.SetLeft(_selection, EventGap / 2);
+        Canvas.SetTop(_selection, start.TotalHours * HourHeight);
+        _selection.Width = Math.Max(0, canvas.ActualWidth - 8 - EventGap);
+        _selection.Height = Math.Max(8, (end - start).TotalHours * HourHeight - EventGap);
     }
 
     // ---- Helpers ----------------------------------------------------------------------------
