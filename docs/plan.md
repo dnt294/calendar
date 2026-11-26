@@ -14,7 +14,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 - [x] **1.1** Tạo solution theo [architecture.md](architecture.md): Core, Providers.Google, Providers.Microsoft, App (WinUI 3 Blank App, Packaged), 2 project test. Build xanh, App chạy ra cửa sổ trống.
 - [x] **1.2** Core models + `ICalendarProvider` + `SyncResult`, `DateRange`, `EventDraft`.
 - [x] **1.3** `SqliteCalendarStore`: schema accounts / calendars / events / sync_state; test round-trip.
-- [ ] **1.4** CI GitHub Actions (windows-latest): build + test. (Free cho repo public; private có quota free hằng tháng.)
+- [x] ~~**1.4** CI GitHub Actions (windows-latest): build + test.~~ **Bỏ** (2026-11-26): dùng cá nhân, build/test chạy local trong Visual Studio là đủ.
 
 ## Phase 2 — Lát dọc đầu tiên: 1 Google account, xem tuần (~2–3 buổi)
 
