@@ -27,7 +27,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 ## Phase 3 — Đa tài khoản + Microsoft (~2 buổi)
 
 - [ ] **3.1** Microsoft provider: MSAL + WAM, cache DPAPI, list calendars, `calendarView` full sync.
-- [ ] **3.2** Sidebar: cây account → calendar, checkbox, màu; lưu trạng thái bật/tắt + màu local.
+- [x] **3.2** Sidebar: cây account → calendar, checkbox, màu; lưu trạng thái bật/tắt + màu local.
 - [ ] **3.3** Thêm nhiều account (kể cả 2 Google), xoá account (xoá cache + token).
   - Xong khi: 3 account hiện cùng lúc, tắt/bật từng calendar đúng.
 

@@ -1,4 +1,5 @@
 using System.Globalization;
+using Calendar.App.Helpers;
 using Calendar.Core.Layout;
 using Calendar.Core.Models;
 using Microsoft.UI;
@@ -200,10 +201,10 @@ public sealed partial class WeekGrid : UserControl
 
         foreach (var item in layout.Items)
         {
-            var color = ParseColor(colors.GetValueOrDefault((item.Event.AccountId, item.Event.CalendarId)));
+            var color = ColorHex.Parse(colors.GetValueOrDefault((item.Event.AccountId, item.Event.CalendarId)));
             var block = new Border
             {
-                Background = new SolidColorBrush(WithAlpha(color, 0x40)),
+                Background = new SolidColorBrush(ColorHex.WithAlpha(color, 0x40)),
                 BorderBrush = new SolidColorBrush(color),
                 BorderThickness = new Thickness(item.ContinuesBefore ? 0 : 3, 0, 0, 0),
                 CornerRadius = new CornerRadius(item.ContinuesBefore ? 0 : 4, item.ContinuesAfter ? 0 : 4,
@@ -287,7 +288,7 @@ public sealed partial class WeekGrid : UserControl
             var range = DateRange.ForDays(day, 1, Zone);
             foreach (var item in DayLayout.Arrange(events, range, MinEventDuration))
             {
-                var color = ParseColor(colors.GetValueOrDefault((item.Event.AccountId, item.Event.CalendarId)));
+                var color = ColorHex.Parse(colors.GetValueOrDefault((item.Event.AccountId, item.Event.CalendarId)));
                 var block = CreateEventBlock(item, day, color);
                 canvas.Children.Add(block);
             }
@@ -329,7 +330,7 @@ public sealed partial class WeekGrid : UserControl
         {
             Tag = item,
             Height = height,
-            Background = new SolidColorBrush(WithAlpha(color, 0x40)),
+            Background = new SolidColorBrush(ColorHex.WithAlpha(color, 0x40)),
             BorderBrush = new SolidColorBrush(color),
             BorderThickness = new Thickness(3, 0, 0, 0),
             CornerRadius = new CornerRadius(4),
@@ -384,14 +385,4 @@ public sealed partial class WeekGrid : UserControl
     // ---- Helpers ----------------------------------------------------------------------------
 
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
-
-    private static Color WithAlpha(Color c, byte alpha) => Color.FromArgb(alpha, c.R, c.G, c.B);
-
-    private static Color ParseColor(string? hex)
-    {
-        if (hex is { Length: 7 } && hex[0] == '#' &&
-            uint.TryParse(hex.AsSpan(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var rgb))
-            return Color.FromArgb(0xFF, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
-        return Colors.SteelBlue;
-    }
 }
