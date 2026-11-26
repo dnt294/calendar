@@ -86,6 +86,50 @@ public class GoogleDraftMappingTests
     }
 
     [Fact]
+    public void Rooms_and_live_responses_come_from_the_current_guest_list()
+    {
+        var cached = new CalendarEvent
+        {
+            AccountId = "a", CalendarId = "c", Id = "e", Title = "t", Start = Nine, End = Nine,
+            Attendees = [new Attendee("me@gmail.com", null, RsvpStatus.NeedsAction, IsSelf: true), new Attendee("x@x.com", null, RsvpStatus.NeedsAction)],
+        };
+        IList<EventAttendee> live =
+        [
+            new() { Email = "me@gmail.com", Self = true, ResponseStatus = "accepted" },
+            new() { Email = "x@x.com", ResponseStatus = "declined" },
+            new() { Email = "room-1@resource.calendar.google.com", Resource = true, ResponseStatus = "accepted" },
+        ];
+
+        var e = GoogleMapper.ToGoogleEvent(Draft() with { AttendeeEmails = ["x@x.com", "y@y.com"] }, cached, live);
+
+        Assert.Equal(
+            [("me@gmail.com", "accepted"), ("x@x.com", "declined"), ("y@y.com", "needsAction"), ("room-1@resource.calendar.google.com", "accepted")],
+            e.Attendees.Select(a => (a.Email, a.ResponseStatus)));
+        Assert.True(e.Attendees[^1].Resource);
+
+        // Removing every guest keeps the room booked.
+        var alone = GoogleMapper.ToGoogleEvent(Draft(), cached, live);
+        Assert.Equal(["room-1@resource.calendar.google.com"], alone.Attendees.Select(a => a.Email));
+    }
+
+    [Fact]
+    public void WithSelfResponse_changes_only_the_owner()
+    {
+        IList<EventAttendee> live =
+        [
+            new() { Email = "boss@x.com", Organizer = true, ResponseStatus = "accepted" },
+            new() { Email = "me@gmail.com", Self = true, ResponseStatus = "needsAction", Comment = "maybe" },
+            new() { Email = "room@resource.calendar.google.com", Resource = true, ResponseStatus = "accepted" },
+        ];
+        var result = GoogleMapper.WithSelfResponse(live, RsvpStatus.Declined)!;
+        Assert.Equal(["accepted", "declined", "accepted"], result.Select(a => a.ResponseStatus));
+        Assert.Equal("maybe", result[1].Comment);
+        Assert.Same(live[0], result[0]);
+        Assert.Null(GoogleMapper.WithSelfResponse([new EventAttendee { Email = "x@x.com" }], RsvpStatus.Accepted));
+        Assert.Null(GoogleMapper.WithSelfResponse(null, RsvpStatus.Accepted));
+    }
+
+    [Fact]
     public void Send_updates_only_when_there_are_guests()
     {
         var withGuest = new CalendarEvent
@@ -182,7 +226,7 @@ public sealed class GoogleWriteTests
     {
         _server.Respond = _ => EventJson.Replace("\"useDefault\": true", "\"useDefault\": false, \"overrides\": [ { \"method\": \"popup\", \"minutes\": 5 } ]");
         var updated = await _provider.UpdateEventAsync(Me, Existing(), Draft() with { UseDefaultReminders = false, Reminders = [new Reminder(5)] }, CancellationToken.None);
-        Assert.DoesNotContain(_server.Requests, r => r.Method == "GET");
+        Assert.DoesNotContain(_server.Requests, r => r.Method == "GET" && r.Path.Contains("calendarList", StringComparison.Ordinal));
         Assert.Equal([new Reminder(5)], updated.Reminders);
     }
 
@@ -203,6 +247,52 @@ public sealed class GoogleWriteTests
         _server.Status = HttpStatusCode.Gone;
         _server.Respond = _ => """{ "error": { "code": 410, "message": "Resource has been deleted" } }""";
         await _provider.DeleteEventAsync(Me, Existing(), CancellationToken.None);
+    }
+
+    private const string InviteJson = """{ "id": "inv", "status": "confirmed", "summary": "Planning", "start": { "dateTime": "2026-11-27T09:00:00+07:00" }, "end": { "dateTime": "2026-11-27T10:00:00+07:00" }, "reminders": { "useDefault": false }, "organizer": { "email": "boss@x.com" }, "attendees": [ { "email": "boss@x.com", "organizer": true, "responseStatus": "accepted" }, { "email": "me@gmail.com", "self": true, "responseStatus": "needsAction" }, { "email": "room@resource.calendar.google.com", "resource": true, "responseStatus": "accepted" } ] }""";
+
+    [Fact]
+    public async Task Respond_patches_the_live_guest_list_with_the_new_response()
+    {
+        _server.Respond = r => r.Method == "PATCH" ? InviteJson.Replace("\"self\": true, \"responseStatus\": \"needsAction\"", "\"self\": true, \"responseStatus\": \"tentative\"") : InviteJson;
+        var invite = Existing("inv") with { SelfRsvp = RsvpStatus.NeedsAction };
+
+        var updated = await _provider.RespondAsync(Me, invite, RsvpStatus.Tentative, CancellationToken.None);
+
+        var patch = _server.Requests.Single(r => r.Method == "PATCH");
+        Assert.EndsWith("/events/inv", patch.Path);
+        Assert.Equal("none", patch.Query["sendUpdates"]);
+        var sent = patch.Body!.RootElement.GetProperty("attendees").EnumerateArray()
+            .Select(a => (a.GetProperty("email").GetString(), a.GetProperty("responseStatus").GetString())).ToList();
+        Assert.Equal([("boss@x.com", "accepted"), ("me@gmail.com", "tentative"), ("room@resource.calendar.google.com", "accepted")], sent);
+        Assert.False(patch.Body.RootElement.TryGetProperty("summary", out _)); // only attendees are patched
+        Assert.Equal(RsvpStatus.Tentative, updated.SelfRsvp);
+    }
+
+    [Fact]
+    public async Task Respond_without_own_guest_entry_fails_without_patching()
+    {
+        _server.Respond = _ => EventJson;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _provider.RespondAsync(Me, Existing("new-1") with { SelfRsvp = RsvpStatus.NeedsAction }, RsvpStatus.Accepted, CancellationToken.None));
+        Assert.DoesNotContain(_server.Requests, r => r.Method == "PATCH");
+    }
+
+    [Fact]
+    public async Task Update_reads_the_current_event_first_to_keep_rooms()
+    {
+        _server.Respond = _ => InviteJson;
+        var cached = Existing("inv") with
+        {
+            Attendees = [new Attendee("me@gmail.com", null, RsvpStatus.NeedsAction, IsSelf: true), new Attendee("boss@x.com", null, RsvpStatus.Accepted, IsOrganizer: true)],
+        };
+
+        await _provider.UpdateEventAsync(Me, cached, Draft() with { AttendeeEmails = ["boss@x.com"] }, CancellationToken.None);
+
+        Assert.Equal("GET", _server.Requests[0].Method);
+        var patch = _server.Requests.Single(r => r.Method == "PATCH");
+        Assert.Contains(patch.Body!.RootElement.GetProperty("attendees").EnumerateArray(),
+            a => a.GetProperty("email").GetString() == "room@resource.calendar.google.com");
     }
 
     // ---- Fakes ------------------------------------------------------------------------------

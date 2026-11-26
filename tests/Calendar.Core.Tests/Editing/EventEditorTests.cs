@@ -128,6 +128,46 @@ public sealed class EventEditorTests : IAsyncLifetime
         await Assert.ThrowsAsync<InvalidOperationException>(() => _editor.DeleteAsync(stray, CancellationToken.None));
     }
 
+    private static CalendarEvent Invite(RsvpStatus self = RsvpStatus.NeedsAction) => new()
+    {
+        AccountId = Me.Id, CalendarId = Primary.Id, Id = "invite", Title = "Planning", Start = T, End = T.AddHours(1),
+        SelfRsvp = self,
+        Attendees = [new Attendee("me@example.com", null, self, IsSelf: true), new Attendee("boss@x.com", null, RsvpStatus.Accepted, IsOrganizer: true)],
+    };
+
+    [Fact]
+    public async Task Respond_updates_provider_then_cache()
+    {
+        await _store.UpsertEventAsync(Invite());
+
+        var updated = await _editor.RespondAsync(Invite(), RsvpStatus.Tentative, CancellationToken.None);
+
+        Assert.Equal(RsvpStatus.Tentative, updated.SelfRsvp);
+        Assert.Equal("respond invite Tentative", _provider.Calls[^1]);
+        Assert.Equal(RsvpStatus.Tentative, Assert.Single(await Cached()).SelfRsvp);
+    }
+
+    [Fact]
+    public async Task Respond_to_own_event_or_with_invalid_status_is_rejected()
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _editor.RespondAsync(Invite() with { SelfRsvp = RsvpStatus.None }, RsvpStatus.Accepted, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            _editor.RespondAsync(Invite(), RsvpStatus.NeedsAction, CancellationToken.None));
+        Assert.Empty(_provider.Calls);
+    }
+
+    [Fact]
+    public async Task Respond_failure_keeps_the_cached_response()
+    {
+        await _store.UpsertEventAsync(Invite());
+        _provider.Fail = new HttpRequestException("offline");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => _editor.RespondAsync(Invite(), RsvpStatus.Declined, CancellationToken.None));
+
+        Assert.Equal(RsvpStatus.NeedsAction, Assert.Single(await Cached()).SelfRsvp);
+    }
+
     private sealed class FakeProvider : ICalendarProvider
     {
         private int _next;
@@ -166,6 +206,11 @@ public sealed class EventEditorTests : IAsyncLifetime
         public Task SignOutAsync(Account account, CancellationToken ct) => throw new NotSupportedException();
         public Task<IReadOnlyList<CalendarInfo>> GetCalendarsAsync(Account a, CancellationToken ct) => throw new NotSupportedException();
         public Task<SyncResult> SyncEventsAsync(Account a, CalendarInfo c, string? s, DateRange w, CancellationToken ct) => throw new NotSupportedException();
-        public Task RespondAsync(Account a, CalendarEvent e, RsvpStatus s, CancellationToken ct) => throw new NotSupportedException();
+        public Task<CalendarEvent> RespondAsync(Account a, CalendarEvent e, RsvpStatus s, CancellationToken ct)
+        {
+            if (Fail is not null) return Task.FromException<CalendarEvent>(Fail);
+            Calls.Add($"respond {e.Id} {s}");
+            return Task.FromResult(e with { SelfRsvp = s });
+        }
     }
 }

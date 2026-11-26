@@ -100,7 +100,8 @@ public sealed partial class MainWindow : Window
         var flyout = new Flyout();
         var panel = new EventDetailsPanel(ev, ViewModel.CalendarOf(ev), ViewModel.CanWrite, ViewModel.WriteDisabledReason,
             onEdit: () => { flyout.Hide(); _ = EditAsync(ev); },
-            onDelete: () => { flyout.Hide(); _ = ConfirmDeleteAsync(ev); });
+            onDelete: () => { flyout.Hide(); _ = ConfirmDeleteAsync(ev); },
+            onRespond: status => { flyout.Hide(); _ = ViewModel.RespondAsync(ev, status); });
         // Delete key deletes the event whose details are open (ui.md shortcuts).
         panel.KeyDown += (_, k) =>
         {

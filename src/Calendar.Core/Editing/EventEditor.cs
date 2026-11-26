@@ -57,6 +57,20 @@ public sealed class EventEditor
         await _store.DeleteEventAsync(ev.AccountId, ev.CalendarId, ev.Id, ct);
     }
 
+    /// <summary>Accept / Tentative / Decline an invite (task 7.1); the cache gets the provider's result.</summary>
+    public async Task<CalendarEvent> RespondAsync(CalendarEvent ev, RsvpStatus status, CancellationToken ct)
+    {
+        if (status is not (RsvpStatus.Accepted or RsvpStatus.Tentative or RsvpStatus.Declined))
+            throw new ArgumentOutOfRangeException(nameof(status), status, "Only Accepted, Tentative or Declined can be sent.");
+        if (ev.SelfRsvp == RsvpStatus.None)
+            throw new InvalidOperationException($"'{ev.Title}' is not an invite to this account.");
+        var (account, provider) = await ResolveAsync(ev.AccountId, ct);
+
+        var updated = await provider.RespondAsync(account, ev, status, ct);
+        await _store.UpsertEventAsync(updated, ct);
+        return updated;
+    }
+
     private static void Validate(EventDraft draft)
     {
         var problems = draft.Validate();

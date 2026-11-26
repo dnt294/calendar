@@ -440,6 +440,10 @@ public sealed partial class ShellViewModel : ObservableObject
     public Task<bool> UpdateEventAsync(CalendarEvent ev, EventDraft draft) =>
         RunWriteAsync(ct => _editor.UpdateAsync(ev, draft, ct), $"Đã lưu \"{draft.Title}\".");
 
+    /// <summary>Accept / Tentative / Decline an invite (task 7.1).</summary>
+    public Task<bool> RespondAsync(CalendarEvent ev, RsvpStatus status) =>
+        RunWriteAsync(ct => _editor.RespondAsync(ev, status, ct), $"Đã trả lời \"{ev.Title}\": {EventText.Rsvp(status)}.");
+
     public Task<bool> DeleteEventAsync(CalendarEvent ev) =>
         RunWriteAsync(async ct => { await _editor.DeleteAsync(ev, ct); return true; }, $"Đã xoá \"{ev.Title}\".");
 

@@ -83,7 +83,10 @@ public static class GoogleMapper
     /// location/description on patch; the attendee list replaces the old one, keeping existing
     /// guests' responses and the owner's own attendee entry.
     /// </summary>
-    public static Event ToGoogleEvent(EventDraft draft, CalendarEvent? existing = null)
+    /// <param name="current">The event's guest list as Google has it now (fetched just before a patch).
+    /// Room/resource entries — which the cache does not keep — are preserved from it, and its responses
+    /// win over cached ones.</param>
+    public static Event ToGoogleEvent(EventDraft draft, CalendarEvent? existing = null, IList<EventAttendee>? current = null)
     {
         var e = new Event
         {
@@ -106,16 +109,30 @@ public static class GoogleMapper
         }
 
         var known = (existing?.Attendees ?? []).ToDictionary(a => a.Email, StringComparer.OrdinalIgnoreCase);
+        var live = (current ?? []).Where(a => !string.IsNullOrEmpty(a.Email))
+            .GroupBy(a => a.Email, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var attendees = draft.AttendeeEmails
-            .Select(email => known.TryGetValue(email, out var a)
-                ? new EventAttendee { Email = a.Email, ResponseStatus = FromRsvp(a.Status), Optional = a.IsOptional ? true : null }
-                : new EventAttendee { Email = email, ResponseStatus = "needsAction" })
+            .Select(email => live.TryGetValue(email, out var l)
+                ? new EventAttendee { Email = l.Email, ResponseStatus = l.ResponseStatus, Optional = l.Optional, DisplayName = l.DisplayName }
+                : known.TryGetValue(email, out var a)
+                    ? new EventAttendee { Email = a.Email, ResponseStatus = FromRsvp(a.Status), Optional = a.IsOptional ? true : null }
+                    : new EventAttendee { Email = email, ResponseStatus = "needsAction" })
             .ToList();
-        if (attendees.Count > 0 && existing?.Attendees.FirstOrDefault(a => a.IsSelf) is { } self)
-            attendees.Insert(0, new EventAttendee { Email = self.Email, ResponseStatus = FromRsvp(self.Status) });
+        var self = (current ?? []).FirstOrDefault(a => a.Self == true) is { } liveSelf
+            ? new EventAttendee { Email = liveSelf.Email, ResponseStatus = liveSelf.ResponseStatus }
+            : existing?.Attendees.FirstOrDefault(a => a.IsSelf) is { } cachedSelf
+                ? new EventAttendee { Email = cachedSelf.Email, ResponseStatus = FromRsvp(cachedSelf.Status) }
+                : null;
+        if (attendees.Count > 0 && self is not null && attendees.All(a => !a.Email.Equals(self.Email, StringComparison.OrdinalIgnoreCase)))
+            attendees.Insert(0, self);
+        // Rooms are not editable in the app: keep them exactly as Google has them.
+        var rooms = (current ?? []).Where(a => a.Resource == true).ToList();
+        if (attendees.Count > 0)
+            attendees.AddRange(rooms);
         // Only touch the guest list when there is or was one, so plain events are not given an empty list.
-        if (attendees.Count > 0 || known.Count > 0)
-            e.Attendees = attendees;
+        if (attendees.Count > 0 || known.Count > 0 || live.Count > 0)
+            e.Attendees = attendees.Count > 0 || rooms.Count == 0 ? attendees : rooms;
 
         e.Reminders = draft.UseDefaultReminders
             ? new Event.RemindersData { UseDefault = true }
@@ -127,6 +144,22 @@ public static class GoogleMapper
                     .ToList(),
             };
         return e;
+    }
+
+    /// <summary>Copy of <paramref name="attendees"/> with the owner's response changed; null when the owner is not a guest.</summary>
+    public static List<EventAttendee>? WithSelfResponse(IList<EventAttendee>? attendees, RsvpStatus status)
+    {
+        if (attendees is null || !attendees.Any(a => a.Self == true))
+            return null;
+        return attendees
+            .Select(a => a.Self == true
+                ? new EventAttendee
+                {
+                    Email = a.Email, DisplayName = a.DisplayName, Optional = a.Optional, Comment = a.Comment,
+                    AdditionalGuests = a.AdditionalGuests, ResponseStatus = FromRsvp(status),
+                }
+                : a)
+            .ToList();
     }
 
     /// <summary>Guests are emailed when the event has (or had) guests other than the owner.</summary>

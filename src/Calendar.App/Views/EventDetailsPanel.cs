@@ -18,7 +18,7 @@ internal sealed class EventDetailsPanel : StackPanel
     private const int MaxGuestsShown = 12;
 
     public EventDetailsPanel(CalendarEvent ev, CalendarChoice? calendar, bool canWrite, string writeDisabledReason,
-        Action onEdit, Action onDelete)
+        Action onEdit, Action onDelete, Action<RsvpStatus> onRespond)
     {
         Spacing = 8;
         Width = 360;
@@ -60,6 +60,34 @@ internal sealed class EventDetailsPanel : StackPanel
             ToolTipService.SetToolTip(join, meeting.ToString());
             join.Click += async (_, _) => await Windows.System.Launcher.LaunchUriAsync(meeting);
             Children.Add(join);
+        }
+
+        // Invite: Có / Có thể / Không (task 7.2). The current answer is highlighted.
+        if (ev.SelfRsvp != RsvpStatus.None)
+        {
+            var rsvp = new StackPanel { Spacing = 6 };
+            rsvp.Children.Add(new TextBlock
+            {
+                Text = ev.IsOccurrence ? "Tham gia? (chỉ lần này)" : "Tham gia?",
+                FontWeight = FontWeights.SemiBold,
+            });
+            var choices = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            foreach (var (label, status) in new[] { ("Có", RsvpStatus.Accepted), ("Có thể", RsvpStatus.Tentative), ("Không", RsvpStatus.Declined) })
+            {
+                var button = new Button { Content = label, IsEnabled = canWrite, MinWidth = 72 };
+                if (ev.SelfRsvp == status)
+                    button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
+                if (!canWrite)
+                    ToolTipService.SetToolTip(button, writeDisabledReason);
+                button.Click += (_, _) =>
+                {
+                    if (ev.SelfRsvp != status)
+                        onRespond(status);
+                };
+                choices.Children.Add(button);
+            }
+            rsvp.Children.Add(choices);
+            AddWithIcon("", rsvp);
         }
 
         var guests = ev.Attendees.ToList();

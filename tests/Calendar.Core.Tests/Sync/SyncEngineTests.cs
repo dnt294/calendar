@@ -248,6 +248,6 @@ public sealed class SyncEngineTests : IAsyncLifetime
         public Task<CalendarEvent> CreateEventAsync(Account a, CalendarInfo c, EventDraft d, CancellationToken ct) => throw new NotSupportedException();
         public Task<CalendarEvent> UpdateEventAsync(Account a, CalendarEvent e, EventDraft d, CancellationToken ct) => throw new NotSupportedException();
         public Task DeleteEventAsync(Account a, CalendarEvent e, CancellationToken ct) => throw new NotSupportedException();
-        public Task RespondAsync(Account a, CalendarEvent e, RsvpStatus s, CancellationToken ct) => throw new NotSupportedException();
+        public Task<CalendarEvent> RespondAsync(Account a, CalendarEvent e, RsvpStatus s, CancellationToken ct) => throw new NotSupportedException();
     }
 }

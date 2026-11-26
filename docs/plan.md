@@ -52,7 +52,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 7 — RSVP (~1 buổi)
 
-- [ ] **7.1** `RespondAsync` (Google patch `attendees[self].responseStatus`; Graph `/accept` `/tentativelyAccept` `/decline`). **7.2** Hiển thị trạng thái (nét đứt / sọc / gạch) + nút trong flyout.
+- [x] **7.1** `RespondAsync` (Google patch `attendees[self].responseStatus`; Graph `/accept` `/tentativelyAccept` `/decline`). **7.2** Hiển thị trạng thái (nét đứt / sọc / gạch) + nút trong flyout.
 
 ## Phase 8 — Nhắc lịch & tray (~2 buổi)
 

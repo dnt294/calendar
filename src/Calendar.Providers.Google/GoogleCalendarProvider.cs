@@ -197,7 +197,10 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
         CancellationToken ct) =>
         WithService(account, ct, async service =>
         {
-            var request = service.Events.Patch(GoogleMapper.ToGoogleEvent(draft, ev), ev.CalendarId, ev.Id);
+            // The guest list is replaced by a patch: start from Google's current one so rooms (not cached)
+            // and the latest responses are kept.
+            var current = await service.Events.Get(ev.CalendarId, ev.Id).ExecuteAsync(ct);
+            var request = service.Events.Patch(GoogleMapper.ToGoogleEvent(draft, ev, current.Attendees), ev.CalendarId, ev.Id);
             request.SendUpdates = SendUpdates<EventsResource.PatchRequest.SendUpdatesEnum>(GoogleMapper.SendUpdatesFor(draft, ev));
             var updated = await request.ExecuteAsync(ct);
             return await MapWrittenAsync(service, account, ev.CalendarId, updated, ct);
@@ -234,8 +237,22 @@ public sealed class GoogleCalendarProvider : ICalendarProvider
                ?? throw new InvalidOperationException($"Google returned event '{written.Id}' as cancelled.");
     }
 
-    public Task RespondAsync(Account account, CalendarEvent ev, RsvpStatus status, CancellationToken ct) =>
-        throw new NotSupportedException("RSVP: task 7.1.");
+    /// <summary>
+    /// Sets the owner's responseStatus in the guest list Google has now (rooms and others untouched).
+    /// Guests are not emailed; the organizer sees the new response on the event.
+    /// For an occurrence only that instance gets the response.
+    /// </summary>
+    public Task<CalendarEvent> RespondAsync(Account account, CalendarEvent ev, RsvpStatus status, CancellationToken ct) =>
+        WithService(account, ct, async service =>
+        {
+            var current = await service.Events.Get(ev.CalendarId, ev.Id).ExecuteAsync(ct);
+            var attendees = GoogleMapper.WithSelfResponse(current.Attendees, status)
+                            ?? throw new InvalidOperationException($"'{ev.Title}' has no guest entry for this account.");
+            var request = service.Events.Patch(new Event { Attendees = attendees }, ev.CalendarId, ev.Id);
+            request.SendUpdates = EventsResource.PatchRequest.SendUpdatesEnum.None;
+            var updated = await request.ExecuteAsync(ct);
+            return await MapWrittenAsync(service, account, ev.CalendarId, updated, ct);
+        });
 
     // ---- Helpers ----------------------------------------------------------------------------
 

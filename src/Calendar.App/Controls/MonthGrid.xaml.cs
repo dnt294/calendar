@@ -320,23 +320,28 @@ public sealed partial class MonthGrid : UserControl
         return button;
     }
 
-    private static Border BlockBar(MonthBar bar, Color color) => new()
+    private static Border BlockBar(MonthBar bar, Color color)
     {
-        Background = new SolidColorBrush(ColorHex.WithAlpha(color, 0x40)),
-        BorderBrush = new SolidColorBrush(color),
-        BorderThickness = new Thickness(bar.ContinuesBefore ? 0 : 3, 0, 0, 0),
-        CornerRadius = new CornerRadius(bar.ContinuesBefore ? 0 : 4, bar.ContinuesAfter ? 0 : 4,
-            bar.ContinuesAfter ? 0 : 4, bar.ContinuesBefore ? 0 : 4),
-        Margin = new Thickness(bar.ContinuesBefore ? 0 : Gap, 1, bar.ContinuesAfter ? 0 : Gap, 1),
-        Padding = new Thickness(6, 0, 4, 0),
-        Child = new TextBlock
+        var block = new Border
         {
-            Text = bar.Event.Title,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        },
-    };
+            Background = new SolidColorBrush(ColorHex.WithAlpha(color, 0x40)),
+            BorderBrush = new SolidColorBrush(color),
+            BorderThickness = new Thickness(bar.ContinuesBefore ? 0 : 3, 0, 0, 0),
+            CornerRadius = new CornerRadius(bar.ContinuesBefore ? 0 : 4, bar.ContinuesAfter ? 0 : 4,
+                bar.ContinuesAfter ? 0 : 4, bar.ContinuesBefore ? 0 : 4),
+            Margin = new Thickness(bar.ContinuesBefore ? 0 : Gap, 1, bar.ContinuesAfter ? 0 : Gap, 1),
+            Padding = new Thickness(6, 0, 4, 0),
+            Child = new TextBlock
+            {
+                Text = bar.Event.Title,
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            },
+        };
+        RsvpLook.Decorate(block, bar.Event, color);
+        return block;
+    }
 
     private static StackPanel TimedItem(CalendarEvent ev, Color color)
     {
@@ -347,7 +352,8 @@ public sealed partial class MonthGrid : UserControl
             Margin = new Thickness(6, 1, Gap, 1),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        panel.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = new SolidColorBrush(color), VerticalAlignment = VerticalAlignment.Center });
+        var dot = new Ellipse { Width = 8, Height = 8, Fill = new SolidColorBrush(color), VerticalAlignment = VerticalAlignment.Center };
+        panel.Children.Add(dot);
         panel.Children.Add(new TextBlock
         {
             Text = $"{ev.Start.ToLocalTime():t} {ev.Title}",
@@ -355,6 +361,7 @@ public sealed partial class MonthGrid : UserControl
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         });
+        RsvpLook.Decorate(panel, dot, ev, color);
         return panel;
     }
 

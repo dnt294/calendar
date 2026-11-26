@@ -254,6 +254,7 @@ public sealed partial class WeekGrid : UserControl
                 },
             };
             ToolTipService.SetToolTip(block, item.Event.Title);
+            RsvpLook.Decorate(block, item.Event, color);
             var clicked = item.Event;
             block.Tapped += (_, e) =>
             {
@@ -382,6 +383,7 @@ public sealed partial class WeekGrid : UserControl
             Padding = new Thickness(6, 2, 4, 2),
             Child = content,
         };
+        RsvpLook.Decorate(block, ev, color);
         ToolTipService.SetToolTip(block, string.IsNullOrEmpty(ev.Location) ? $"{ev.Title}\n{time}" : $"{ev.Title}\n{time}\n{ev.Location}");
         // Pressing an event must not start a slot drag on the canvas underneath.
         block.PointerPressed += (_, e) => e.Handled = true;

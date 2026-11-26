@@ -35,5 +35,9 @@ public interface ICalendarProvider
     /// <summary>Deletes a single event, or only this occurrence when <see cref="CalendarEvent.IsOccurrence"/>.</summary>
     Task DeleteEventAsync(Account account, CalendarEvent ev, CancellationToken ct);
 
-    Task RespondAsync(Account account, CalendarEvent ev, RsvpStatus status, CancellationToken ct);
+    /// <summary>
+    /// Sets the account owner's response to an invite (only this occurrence for a recurring event)
+    /// and returns the event as stored by the provider afterwards.
+    /// </summary>
+    Task<CalendarEvent> RespondAsync(Account account, CalendarEvent ev, RsvpStatus status, CancellationToken ct);
 }
