@@ -24,7 +24,6 @@ public sealed class ReauthPromptViewModel(Account account, IAsyncRelayCommand si
 /// <summary>State of the main window: visible week, its events, accounts, sign-in and sync status.</summary>
 public sealed partial class ShellViewModel : ObservableObject
 {
-    private const int DaysInView = 7;
     private static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(5);
     public static readonly TimeSpan SyncInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan SyncOnFocusMinAge = TimeSpan.FromMinutes(1);
@@ -49,14 +48,38 @@ public sealed partial class ShellViewModel : ObservableObject
         _sync = sync;
         _dispatcher = dispatcher;
         _configError = configError;
-        StartDate = WeekNavigation.StartOfWeek(DateOnly.FromDateTime(DateTime.Today), FirstDayOfWeek);
+        SelectedDate = DateOnly.FromDateTime(DateTime.Today);
+        UpdateVisibleRange();
         _sync.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => _ = OnSyncStateChangedAsync());
     }
 
     // ---- State ------------------------------------------------------------------------------
 
+    /// <summary>Day, Week or Month.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsTimeGridView), nameof(IsMonthView))]
+    public partial CalendarViewMode ViewMode { get; set; } = CalendarViewMode.Week;
+
+    public bool IsTimeGridView => ViewMode != CalendarViewMode.Month;
+    public bool IsMonthView => ViewMode == CalendarViewMode.Month;
+
+    /// <summary>The date the user is looking at; the visible range is derived from it and <see cref="ViewMode"/>.</summary>
+    [ObservableProperty]
+    public partial DateOnly SelectedDate { get; set; }
+
+    /// <summary>First visible day (time grid start / month grid top-left).</summary>
     [ObservableProperty]
     public partial DateOnly StartDate { get; set; }
+
+    /// <summary>Number of visible days in the time grid: 1 or 7 (the Month view scrolls on its own).</summary>
+    [ObservableProperty]
+    public partial int Days { get; set; } = 7;
+
+    [ObservableProperty]
+    public partial string PreviousLabel { get; set; } = "Tuần trước";
+
+    [ObservableProperty]
+    public partial string NextLabel { get; set; } = "Tuần sau";
 
     [ObservableProperty]
     public partial string RangeLabel { get; set; } = "";
@@ -97,8 +120,6 @@ public sealed partial class ShellViewModel : ObservableObject
 
     [ObservableProperty]
     public partial InfoBarSeverity MessageSeverity { get; set; }
-
-    public int Days => DaysInView;
 
     /// <summary>Sidebar tree: account → calendars.</summary>
     public ObservableCollection<AccountGroupViewModel> Accounts { get; } = [];
@@ -145,17 +166,46 @@ public sealed partial class ShellViewModel : ObservableObject
     // ---- Navigation -------------------------------------------------------------------------
 
     [RelayCommand]
-    private void GoToToday() => StartDate = WeekNavigation.StartOfWeek(DateOnly.FromDateTime(DateTime.Today), FirstDayOfWeek);
+    private void GoToToday() => SelectedDate = DateOnly.FromDateTime(DateTime.Today);
 
     [RelayCommand]
-    private void Previous() => StartDate = StartDate.AddDays(-DaysInView);
+    private void Previous() => SelectedDate = CalendarNavigation.Step(ViewMode, SelectedDate, -1);
 
     [RelayCommand]
-    private void Next() => StartDate = StartDate.AddDays(DaysInView);
+    private void Next() => SelectedDate = CalendarNavigation.Step(ViewMode, SelectedDate, 1);
 
-    partial void OnStartDateChanged(DateOnly value)
+    /// <summary>Month grid was scrolled to another month: follow it without scrolling back.</summary>
+    public void OnMonthScrolled(DateOnly month)
     {
-        RangeLabel = WeekNavigation.FormatRangeLabel(value, DaysInView, CultureInfo.CurrentCulture);
+        if (SelectedDate.Year == month.Year && SelectedDate.Month == month.Month)
+            return;
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        SelectedDate = today.Year == month.Year && today.Month == month.Month ? today : month;
+    }
+
+    /// <summary>Month grid: a day number was clicked.</summary>
+    public void OpenDay(DateOnly date)
+    {
+        SelectedDate = date;
+        ViewMode = CalendarViewMode.Day;
+    }
+
+    partial void OnSelectedDateChanged(DateOnly value) => UpdateVisibleRange();
+
+    partial void OnViewModeChanged(CalendarViewMode value) => UpdateVisibleRange();
+
+    private void UpdateVisibleRange()
+    {
+        var (first, days) = CalendarNavigation.VisibleDays(ViewMode, SelectedDate, FirstDayOfWeek);
+        StartDate = first;
+        Days = days;
+        RangeLabel = CalendarNavigation.Label(ViewMode, SelectedDate, FirstDayOfWeek, CultureInfo.CurrentCulture);
+        (PreviousLabel, NextLabel) = ViewMode switch
+        {
+            CalendarViewMode.Day => ("Ngày trước", "Ngày sau"),
+            CalendarViewMode.Month => ("Tháng trước", "Tháng sau"),
+            _ => ("Tuần trước", "Tuần sau"),
+        };
         _ = ReloadSafeAsync();
     }
 
@@ -307,7 +357,8 @@ public sealed partial class ShellViewModel : ObservableObject
         // Navigation can trigger several reloads at once; only the latest one may update the view.
         var version = ++_reloadVersion;
         var zone = TimeZoneInfo.Local;
-        var range = DateRange.ForDays(StartDate, DaysInView, zone);
+        var (first, days) = CalendarNavigation.LoadRange(ViewMode, SelectedDate, FirstDayOfWeek);
+        var range = DateRange.ForDays(first, days, zone);
 
         var calendars = await _store.GetCalendarsAsync();
         var events = await _store.GetEventsAsync(range, zone);

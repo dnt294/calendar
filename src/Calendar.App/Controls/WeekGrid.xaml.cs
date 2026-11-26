@@ -39,6 +39,8 @@ public sealed partial class WeekGrid : UserControl
             Rebuild();
         };
         Unloaded += (_, _) => _clock.Stop();
+        // Hidden in Month view (where Days is 35-42): skip work then, catch up when shown again.
+        RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => Rebuild());
     }
 
     // ---- Properties -------------------------------------------------------------------------
@@ -106,7 +108,7 @@ public sealed partial class WeekGrid : UserControl
 
     private void Rebuild()
     {
-        if (!IsLoaded)
+        if (!IsLoaded || Visibility != Visibility.Visible)
             return;
 
         var days = Math.Max(1, Days);

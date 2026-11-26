@@ -35,16 +35,17 @@
                 <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center" HorizontalAlignment="Left">
                     <Button Content="Hôm nay"
                             Command="{x:Bind ViewModel.GoToTodayCommand}"
+                            ToolTipService.ToolTip="Hôm nay (T)"
                             Margin="12,0,8,0" />
                     <Button Command="{x:Bind ViewModel.PreviousCommand}"
-                            ToolTipService.ToolTip="Tuần trước"
-                            AutomationProperties.Name="Tuần trước"
+                            ToolTipService.ToolTip="{x:Bind ViewModel.PreviousLabel, Mode=OneWay}"
+                            AutomationProperties.Name="{x:Bind ViewModel.PreviousLabel, Mode=OneWay}"
                             Style="{StaticResource SubtleButtonStyle}">
                         <FontIcon Glyph="&#xE76B;" FontSize="12" />
                     </Button>
                     <Button Command="{x:Bind ViewModel.NextCommand}"
-                            ToolTipService.ToolTip="Tuần sau"
-                            AutomationProperties.Name="Tuần sau"
+                            ToolTipService.ToolTip="{x:Bind ViewModel.NextLabel, Mode=OneWay}"
+                            AutomationProperties.Name="{x:Bind ViewModel.NextLabel, Mode=OneWay}"
                             Style="{StaticResource SubtleButtonStyle}">
                         <FontIcon Glyph="&#xE76C;" FontSize="12" />
                     </Button>
@@ -56,9 +57,19 @@
             </TitleBar.Content>
 
             <TitleBar.RightHeader>
-                <Grid Margin="0,0,8,0" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,8,0" VerticalAlignment="Center">
+                <!-- Day / Week / Month (D / W / M). Selection is synced with ViewModel.ViewMode in code-behind. -->
+                <SelectorBar x:Name="ViewSelector" SelectionChanged="OnViewSelectorChanged">
+                    <SelectorBarItem x:Name="DayItem" Text="Ngày" Tag="Day" ToolTipService.ToolTip="Ngày (D)" />
+                    <SelectorBarItem x:Name="WeekItem" Text="Tuần" Tag="Week" ToolTipService.ToolTip="Tuần (W)" IsSelected="True" />
+                    <SelectorBarItem x:Name="MonthItem" Text="Tháng" Tag="Month" ToolTipService.ToolTip="Tháng (M)" />
+                </SelectorBar>
+                <!-- Fixed width: the button and the spinner swap places while syncing; without it the
+                     view selector shifted. -->
+                <Grid VerticalAlignment="Center" Width="40">
                     <Button Command="{x:Bind ViewModel.SyncNowCommand}"
                             Style="{StaticResource SubtleButtonStyle}"
+                            HorizontalAlignment="Center"
                             Visibility="{x:Bind ViewModel.IsNotSyncing, Mode=OneWay}"
                             ToolTipService.ToolTip="Đồng bộ ngay (Ctrl+R)"
                             AutomationProperties.Name="Đồng bộ ngay">
@@ -69,8 +80,10 @@
                     </Button>
                     <ProgressRing IsActive="{x:Bind ViewModel.IsSyncing, Mode=OneWay}"
                                   Width="18" Height="18"
+                                  HorizontalAlignment="Center"
                                   ToolTipService.ToolTip="Đang đồng bộ…" />
                 </Grid>
+                </StackPanel>
             </TitleBar.RightHeader>
         </TitleBar>
 
@@ -101,7 +114,7 @@
                    Grid.Row="2"
                    DisplayMode="Inline"
                    IsPaneOpen="True"
-                   OpenPaneLength="260"
+                   OpenPaneLength="300"
                    PaneBackground="Transparent">
 
             <!-- Sidebar: account → calendars, add account. -->
@@ -114,6 +127,25 @@
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="12">
+                            <!-- Mini month: jump to any date (task 5.3). Day/Week only: Month view scrolls itself.
+                                 Viewbox shrinks it to the pane width (its template is wider than the pane);
+                                 transparent backgrounds let the Mica show through like the rest of the sidebar. -->
+                            <Viewbox Stretch="Uniform"
+                                     StretchDirection="DownOnly"
+                                     HorizontalAlignment="Left"
+                                     Visibility="{x:Bind ViewModel.IsTimeGridView, Mode=OneWay}">
+                                <CalendarView x:Name="MiniCalendar"
+                                              SelectionMode="Single"
+                                              FirstDayOfWeek="Monday"
+                                              IsOutOfScopeEnabled="True"
+                                              Background="Transparent"
+                                              BorderThickness="0"
+                                              CalendarItemBackground="Transparent"
+                                              CalendarItemBorderThickness="0"
+                                              OutOfScopeBackground="Transparent"
+                                              SelectedDatesChanged="OnMiniCalendarSelectedDatesChanged" />
+                            </Viewbox>
+
                             <TextBlock Text="Chưa có tài khoản nào."
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        Visibility="{x:Bind ViewModel.HasNoAccounts, Mode=OneWay}" />
@@ -254,11 +286,21 @@
                 </Grid>
             </SplitView.Pane>
 
-            <controls:WeekGrid Margin="0,0,8,0"
-                               StartDate="{x:Bind ViewModel.StartDate, Mode=OneWay}"
-                               Days="{x:Bind ViewModel.Days}"
-                               Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
-                               Events="{x:Bind ViewModel.Events, Mode=OneWay}" />
+            <Grid Margin="0,0,8,0">
+                <!-- Day (1 column) and Week (7 columns) share the time grid. -->
+                <controls:WeekGrid Visibility="{x:Bind ViewModel.IsTimeGridView, Mode=OneWay}"
+                                   StartDate="{x:Bind ViewModel.StartDate, Mode=OneWay}"
+                                   Days="{x:Bind ViewModel.Days, Mode=OneWay}"
+                                   Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
+                                   Events="{x:Bind ViewModel.Events, Mode=OneWay}" />
+                <!-- Scrolls continuously through months; reports the month in view back to the view model. -->
+                <controls:MonthGrid Visibility="{x:Bind ViewModel.IsMonthView, Mode=OneWay}"
+                                    DisplayMonth="{x:Bind ViewModel.SelectedDate, Mode=OneWay}"
+                                    Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
+                                    Events="{x:Bind ViewModel.Events, Mode=OneWay}"
+                                    DayRequested="OnMonthDayRequested"
+                                    VisibleMonthChanged="OnMonthScrolled" />
+            </Grid>
         </SplitView>
     </Grid>
 </Window>

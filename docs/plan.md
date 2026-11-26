@@ -41,7 +41,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 5 — View Ngày & Tháng, mini-month (~1–2 buổi)
 
-- [ ] **5.1** Day view (tái dùng WeekGrid với 1 cột). **5.2** MonthGrid + "+N nữa". **5.3** Mini-month sidebar, phím tắt điều hướng.
+- [x] **5.1** Day view (tái dùng WeekGrid với 1 cột). **5.2** MonthGrid + "+N nữa". **5.3** Mini-month sidebar, phím tắt điều hướng.
 
 ## Phase 6 — Tạo / sửa / xoá (~3 buổi)
 

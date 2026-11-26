@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Calendar.App.Controls.MonthGrid"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Row 0: weekday names (fixed). Row 1: continuously scrolling week rows (virtualized). -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="HeaderGrid" Grid.Row="0" Padding="0,4,0,4" />
+
+        <ScrollViewer x:Name="Scroller"
+                      Grid.Row="1"
+                      HorizontalScrollMode="Disabled"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto"
+                      BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                      BorderThickness="0,1,0,0">
+            <!-- Layout (one column of equal rows) is set in code. -->
+            <ItemsRepeater x:Name="Weeks">
+                <ItemsRepeater.ItemTemplate>
+                    <!-- Content is built in code when a row is realized (see OnElementPrepared). -->
+                    <DataTemplate>
+                        <Grid />
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
