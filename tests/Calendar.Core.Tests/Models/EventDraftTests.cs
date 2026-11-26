@@ -56,6 +56,27 @@ public class EventDraftTests
         Assert.False(EventDraft.FromEvent(ev with { UsesDefaultReminders = false }).UseDefaultReminders);
     }
 
+    [Fact]
+    public void MovedTo_keeps_duration_and_everything_else()
+    {
+        var ev = new CalendarEvent
+        {
+            AccountId = "a", CalendarId = "c", Id = "e", Title = "Review", Start = Nine, End = Nine.AddMinutes(45),
+            Location = "Room 1", Description = "<b>agenda</b>", UsesDefaultReminders = false, Reminders = [new Reminder(5), new Reminder(30)],
+            Attendees = [new Attendee("me@x.com", null, RsvpStatus.Accepted, IsSelf: true), new Attendee("you@x.com", null, RsvpStatus.Accepted)],
+        };
+        var newStart = Nine.AddDays(1).AddHours(2);
+
+        var draft = EventDraft.MovedTo(ev, newStart);
+
+        Assert.Equal(newStart, draft.Start);
+        Assert.Equal(newStart.AddMinutes(45), draft.End);
+        Assert.Equal(("Review", "Room 1", "<b>agenda</b>"), (draft.Title, draft.Location, draft.Description));
+        Assert.Equal(["you@x.com"], draft.AttendeeEmails);
+        Assert.False(draft.UseDefaultReminders);
+        Assert.Equal(ev.Reminders, draft.Reminders);
+    }
+
     [Theory]
     [InlineData("", new string[0])]
     [InlineData("a@x.com", new[] { "a@x.com" })]

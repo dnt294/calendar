@@ -15,11 +15,6 @@ namespace Calendar.App.Views;
 /// </summary>
 internal sealed class EventEditorDialog : ContentDialog
 {
-    private sealed record ReminderOption(string Label, bool UseDefault, int? Minutes)
-    {
-        public override string ToString() => Label;
-    }
-
     private readonly EventDraft _initial;
     private readonly string _initialDescriptionText;
     private readonly TextBox _title = new() { Header = "Tiêu đề", PlaceholderText = "Thêm tiêu đề" };
@@ -38,9 +33,11 @@ internal sealed class EventEditorDialog : ContentDialog
     private DateTimeOffset _lastStart;
 
     public EventEditorDialog(XamlRoot root, string heading, EventDraft initial, IReadOnlyList<CalendarChoice> calendars,
-        CalendarChoice? selected, bool calendarLocked, string? note)
+        CalendarChoice? selected, bool calendarLocked, string? note, DayOfWeek firstDayOfWeek)
     {
         XamlRoot = root;
+        _startDate.FirstDayOfWeek = (Windows.Globalization.DayOfWeek)(int)firstDayOfWeek;
+        _endDate.FirstDayOfWeek = (Windows.Globalization.DayOfWeek)(int)firstDayOfWeek;
         Title = heading;
         PrimaryButtonText = "Lưu";
         CloseButtonText = "Huỷ";
@@ -80,18 +77,7 @@ internal sealed class EventEditorDialog : ContentDialog
         _lastStart = ReadStart() ?? initial.Start;
 
         // Reminders: keep the draft's own choice selectable even if it is not a preset.
-        var options = new List<ReminderOption>
-        {
-            new("Mặc định của lịch", true, null),
-            new("Không nhắc", false, null),
-            new("Lúc bắt đầu", false, 0),
-            new("5 phút trước", false, 5),
-            new("10 phút trước", false, 10),
-            new("15 phút trước", false, 15),
-            new("30 phút trước", false, 30),
-            new("1 giờ trước", false, 60),
-            new("1 ngày trước", false, 1440),
-        };
+        var options = ReminderPresets.All();
         _initialReminder = initial.UseDefaultReminders ? options[0]
             : initial.Reminders.Count == 0 ? options[1]
             : options.FirstOrDefault(o => o.Minutes == initial.Reminders[0].MinutesBefore && initial.Reminders.Count == 1)

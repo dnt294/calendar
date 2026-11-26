@@ -35,6 +35,114 @@ public sealed partial class WeekGrid : UserControl
     /// <summary>Empty time (or the all-day band) was clicked or dragged over.</summary>
     public event EventHandler<SlotSelectedEventArgs>? SlotSelected;
 
+    /// <summary>An event was dragged to another time or day (Phase 9, drag &amp; drop).</summary>
+    public event EventHandler<EventMovedEventArgs>? EventMoved;
+
+    // ---- Drag & drop to reschedule ----------------------------------------------------------
+
+    private const double DragThreshold = 6;
+    private sealed class MoveState
+    {
+        public required CalendarEvent Event { get; init; }
+        public required Color Color { get; init; }
+        public required Windows.Foundation.Point PressedAt { get; init; }
+        public required double GrabOffset { get; init; }
+        public Border? Ghost { get; set; }
+        public (DateOnly Day, TimeSpan Start)? Target { get; set; }
+    }
+
+    private MoveState? _move;
+    private bool _suppressTap;
+
+    /// <summary>Timed events within one day; all-day and multi-day events are not dragged.</summary>
+    private static bool IsDraggable(CalendarEvent ev) =>
+        !ev.IsAllDay && ev.Start.ToLocalTime().Date == ev.End.AddTicks(-1).ToLocalTime().Date;
+
+    private void BeginMove(CalendarEvent ev, Border block, Color color, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        _move = new MoveState
+        {
+            Event = ev,
+            Color = color,
+            PressedAt = e.GetCurrentPoint(BodyGrid).Position,
+            GrabOffset = e.GetCurrentPoint(block).Position.Y,
+        };
+        block.CapturePointer(e.Pointer);
+    }
+
+    private void ContinueMove(Border block, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_move is not { } move)
+            return;
+        var pos = e.GetCurrentPoint(BodyGrid).Position;
+        if (move.Ghost is null && Math.Abs(pos.X - move.PressedAt.X) < DragThreshold && Math.Abs(pos.Y - move.PressedAt.Y) < DragThreshold)
+            return;
+
+        // Which day column is under the pointer, and the snapped start time there.
+        var canvas = _dayCanvases.FirstOrDefault(c =>
+        {
+            var left = c.TransformToVisual(BodyGrid).TransformPoint(default).X;
+            return pos.X >= left && pos.X < left + c.ActualWidth;
+        });
+        if (canvas is null)
+            return;
+        var duration = move.Event.End - move.Event.Start;
+        var minutes = (pos.Y - move.GrabOffset) / HourHeight * 60;
+        minutes = Math.Round(minutes / SnapStep.TotalMinutes) * SnapStep.TotalMinutes;
+        minutes = Math.Clamp(minutes, 0, Math.Max(0, DayTimeline.MinutesPerDay - duration.TotalMinutes));
+        var start = TimeSpan.FromMinutes(minutes);
+        move.Target = ((DateOnly)canvas.Tag, start);
+
+        if (move.Ghost is null || !ReferenceEquals(move.Ghost.Parent, canvas))
+        {
+            if (move.Ghost?.Parent is Canvas old)
+                old.Children.Remove(move.Ghost);
+            move.Ghost ??= new Border
+            {
+                Background = new SolidColorBrush(ColorHex.WithAlpha(move.Color, 0x70)),
+                BorderBrush = new SolidColorBrush(move.Color),
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(4),
+                IsHitTestVisible = false,
+                Padding = new Thickness(6, 2, 4, 2),
+                Child = new TextBlock { FontSize = 12, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
+            };
+            canvas.Children.Add(move.Ghost);
+            block.Opacity = 0.4;
+        }
+        ((TextBlock)move.Ghost.Child).Text = $"{DateTime.Today.Add(start):t} {move.Event.Title}";
+        Canvas.SetLeft(move.Ghost, EventGap / 2);
+        Canvas.SetTop(move.Ghost, start.TotalHours * HourHeight);
+        move.Ghost.Width = Math.Max(0, canvas.ActualWidth - 8 - EventGap);
+        move.Ghost.Height = Math.Max(16, duration.TotalHours * HourHeight - EventGap);
+        e.Handled = true;
+    }
+
+    private void EndMove(Border block, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (_move is not { } move)
+            return;
+        block.ReleasePointerCapture(e.Pointer);
+        var dragged = move.Ghost is not null;
+        CancelMove(block);
+        if (!dragged || move.Target is not { } target)
+            return;
+
+        _suppressTap = true;
+        var newStart = LocalTime.At(target.Day, target.Start);
+        if (newStart != move.Event.Start)
+            EventMoved?.Invoke(this, new EventMovedEventArgs(move.Event, newStart));
+        e.Handled = true;
+    }
+
+    private void CancelMove(Border block)
+    {
+        if (_move?.Ghost?.Parent is Canvas parent)
+            parent.Children.Remove(_move.Ghost);
+        block.Opacity = 1;
+        _move = null;
+    }
+
     /// <summary>Removes the highlighted slot (call when the quick-create flyout closes).</summary>
     public void ClearSelection()
     {
@@ -58,6 +166,8 @@ public sealed partial class WeekGrid : UserControl
         Unloaded += (_, _) => _clock.Stop();
         // Hidden in Month view (where Days is 35-42): skip work then, catch up when shown again.
         RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => Rebuild());
+        // Brushes are resolved when the grid is built: rebuild when Windows switches light/dark.
+        ActualThemeChanged += (_, _) => Rebuild();
     }
 
     // ---- Properties -------------------------------------------------------------------------
@@ -114,7 +224,24 @@ public sealed partial class WeekGrid : UserControl
     }
 
     /// <summary>Hour the grid scrolls to when first shown.</summary>
-    public int ScrollToHour { get; set; } = 8;
+    public static readonly DependencyProperty WorkDayStartProperty = DependencyProperty.Register(
+        nameof(WorkDayStart), typeof(TimeSpan), typeof(WeekGrid), new PropertyMetadata(TimeSpan.FromHours(8), OnLayoutPropertyChanged));
+
+    /// <summary>Start of working hours: the grid opens scrolled here; time outside working hours is shaded.</summary>
+    public TimeSpan WorkDayStart
+    {
+        get => (TimeSpan)GetValue(WorkDayStartProperty);
+        set => SetValue(WorkDayStartProperty, value);
+    }
+
+    public static readonly DependencyProperty WorkDayEndProperty = DependencyProperty.Register(
+        nameof(WorkDayEnd), typeof(TimeSpan), typeof(WeekGrid), new PropertyMetadata(TimeSpan.FromHours(18), OnLayoutPropertyChanged));
+
+    public TimeSpan WorkDayEnd
+    {
+        get => (TimeSpan)GetValue(WorkDayEndProperty);
+        set => SetValue(WorkDayEndProperty, value);
+    }
 
     private static void OnLayoutPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
         ((WeekGrid)d).Rebuild();
@@ -145,7 +272,7 @@ public sealed partial class WeekGrid : UserControl
         {
             _scrolledInitially = true;
             // Wait for the ScrollViewer to measure the new content before scrolling.
-            DispatcherQueue.TryEnqueue(() => Scroller.ChangeView(null, ScrollToHour * HourHeight, null, disableAnimation: true));
+            DispatcherQueue.TryEnqueue(() => Scroller.ChangeView(null, WorkDayStart.TotalHours * HourHeight, null, disableAnimation: true));
         }
     }
 
@@ -320,6 +447,28 @@ public sealed partial class WeekGrid : UserControl
             Grid.SetRowSpan(column, 24);
             BodyGrid.Children.Add(column);
 
+            // Outside working hours is shaded, so the working day stands out (ui.md).
+            foreach (var (top, height) in new[]
+                     {
+                         (0.0, WorkDayStart.TotalHours * HourHeight),
+                         (WorkDayEnd.TotalHours * HourHeight, (24 - WorkDayEnd.TotalHours) * HourHeight),
+                     })
+            {
+                if (height <= 0)
+                    continue;
+                var shade = new Border
+                {
+                    Background = Brush("SubtleFillColorTertiaryBrush"),
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, top, 0, 0),
+                    Height = height,
+                    IsHitTestVisible = false,
+                };
+                Grid.SetColumn(shade, i + 1);
+                Grid.SetRowSpan(shade, 24);
+                BodyGrid.Children.Add(shade);
+            }
+
             // Transparent background so empty time receives clicks (a null background is not hit-tested).
             var canvas = new Canvas { Tag = day, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
             canvas.PointerPressed += OnCanvasPointerPressed;
@@ -386,10 +535,23 @@ public sealed partial class WeekGrid : UserControl
         RsvpLook.Decorate(block, ev, color);
         ToolTipService.SetToolTip(block, string.IsNullOrEmpty(ev.Location) ? $"{ev.Title}\n{time}" : $"{ev.Title}\n{time}\n{ev.Location}");
         // Pressing an event must not start a slot drag on the canvas underneath.
-        block.PointerPressed += (_, e) => e.Handled = true;
+        block.PointerPressed += (_, e) =>
+        {
+            e.Handled = true;
+            if (IsDraggable(ev) && e.GetCurrentPoint(block).Properties.IsLeftButtonPressed)
+                BeginMove(ev, block, color, e);
+        };
+        block.PointerMoved += (_, e) => ContinueMove(block, e);
+        block.PointerReleased += (_, e) => EndMove(block, e);
+        block.PointerCaptureLost += (_, _) => CancelMove(block);
         block.Tapped += (_, e) =>
         {
             e.Handled = true;
+            if (_suppressTap)
+            {
+                _suppressTap = false;
+                return;
+            }
             EventClicked?.Invoke(this, new EventClickedEventArgs(ev, block));
         };
         Canvas.SetTop(block, top);

@@ -26,8 +26,7 @@ public sealed partial class MonthGrid : UserControl
     private const double VisibleRows = 6;
     private const double MinRowHeight = 90;
 
-    /// <summary>TODO(Phase 9): first day of week from settings (must match the view model).</summary>
-    private readonly MonthScroll _scroll = new(DateOnly.FromDateTime(DateTime.Today), DayOfWeek.Monday, yearsEachSide: 10);
+    private MonthScroll _scroll = new(DateOnly.FromDateTime(DateTime.Today), DayOfWeek.Monday, yearsEachSide: 10);
     private readonly Dictionary<int, Grid> _realized = new();
     private readonly UniformGridLayout _layout;
     private Dictionary<(string, string), string> _colors = new();
@@ -72,6 +71,12 @@ public sealed partial class MonthGrid : UserControl
             // Let the repeater measure first, then jump without animation.
             DispatcherQueue.TryEnqueue(() => ScrollToMonth(MonthOf(DisplayMonth)));
         };
+        // Brushes are resolved when rows are built: rebuild when Windows switches light/dark.
+        ActualThemeChanged += (_, _) =>
+        {
+            BuildHeader();
+            RefreshRows();
+        };
         RegisterPropertyChangedCallback(VisibilityProperty, (_, _) =>
         {
             if (Visibility == Visibility.Visible && IsLoaded)
@@ -102,6 +107,31 @@ public sealed partial class MonthGrid : UserControl
     {
         get => (DateOnly)GetValue(DisplayMonthProperty);
         set => SetValue(DisplayMonthProperty, value);
+    }
+
+    public static readonly DependencyProperty FirstDayOfWeekProperty = DependencyProperty.Register(
+        nameof(FirstDayOfWeek), typeof(DayOfWeek), typeof(MonthGrid),
+        new PropertyMetadata(DayOfWeek.Monday, (d, _) => ((MonthGrid)d).OnFirstDayOfWeekChanged()));
+
+    /// <summary>Column order of the weeks (from settings).</summary>
+    public DayOfWeek FirstDayOfWeek
+    {
+        get => (DayOfWeek)GetValue(FirstDayOfWeekProperty);
+        set => SetValue(FirstDayOfWeekProperty, value);
+    }
+
+    private void OnFirstDayOfWeekChanged()
+    {
+        // Week rows start on another day: new row list, new header, back to the month in view.
+        var month = _visibleMonth == default ? MonthOf(DisplayMonth) : _visibleMonth;
+        _scroll = new MonthScroll(DateOnly.FromDateTime(DateTime.Today), FirstDayOfWeek, yearsEachSide: 10);
+        _realized.Clear();
+        Weeks.ItemsSource = Enumerable.Range(0, _scroll.WeekCount).ToList();
+        if (!IsLoaded)
+            return;
+        BuildHeader();
+        if (Visibility == Visibility.Visible)
+            DispatcherQueue.TryEnqueue(() => ScrollToMonth(month));
     }
 
     public static readonly DependencyProperty EventsProperty = DependencyProperty.Register(

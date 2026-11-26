@@ -35,6 +35,15 @@ public sealed record EventDraft
         Reminders = ev.Reminders,
     };
 
+    /// <summary>Drag &amp; drop: the event's own fields, moved to start at <paramref name="newStart"/> with the same duration.</summary>
+    public static EventDraft MovedTo(CalendarEvent ev, DateTimeOffset newStart) => FromEvent(ev) with
+    {
+        Start = newStart,
+        End = newStart + (ev.End - ev.Start),
+        // Keep the HTML description and every reminder exactly as they are.
+        Description = ev.Description,
+    };
+
     /// <summary>Problems that must be fixed before saving; empty when the draft is valid.</summary>
     public IReadOnlyList<DraftProblem> Validate()
     {

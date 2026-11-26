@@ -63,7 +63,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 9 — Hoàn thiện (~1–2 buổi)
 
-- [ ] Trang Cài đặt, phím tắt đầy đủ, kéo-thả đổi giờ (nice-to-have), dark mode kiểm tra, dọn spike.
+- [x] Trang Cài đặt, phím tắt đầy đủ, kéo-thả đổi giờ (nice-to-have), dark mode kiểm tra, dọn spike. _(Không có spike nào được tạo nên không có gì để dọn.)_
 - [ ] Dùng thật 1 tuần thay app Calendar của Windows → ghi lại backlog v2.
 
 ## Backlog v2 (không làm ở v1)

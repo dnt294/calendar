@@ -3,6 +3,7 @@ using Calendar.App.ViewModels;
 using Calendar.Core.Editing;
 using Calendar.Core.Providers;
 using Calendar.Core.Reminders;
+using Calendar.Core.Settings;
 using Calendar.Core.Storage;
 using Calendar.Core.Sync;
 using Calendar.Providers.Google;
@@ -20,9 +21,16 @@ public partial class App : Application
     private MainWindow? _window;
     private ReminderScheduler? _reminders;
     private DispatcherQueue? _dispatcher;
+    private readonly SettingsStore _settingsStore;
+    private readonly AppSettings _settings;
 
     public App()
     {
+        // The theme can only be chosen before any window exists, so settings are read here (Phase 9).
+        _settingsStore = new SettingsStore(Path.Combine(ApplicationData.Current.LocalFolder.Path, "settings.json"));
+        _settings = _settingsStore.Load();
+        if (_settings.Theme != AppTheme.System)
+            RequestedTheme = _settings.Theme == AppTheme.Dark ? ApplicationTheme.Dark : ApplicationTheme.Light;
         InitializeComponent();
     }
 
@@ -50,7 +58,8 @@ public partial class App : Application
             (range, ct) => store.GetEventsAsync(range, TimeZoneInfo.Local, enabledCalendarsOnly: true, ct),
             TimeProvider.System, TimeZoneInfo.Local);
 
-        var viewModel = new ShellViewModel(store, engine, editor, coordinator, _reminders, _dispatcher, configError);
+        var viewModel = new ShellViewModel(store, engine, editor, coordinator, _reminders, _settingsStore, _settings,
+            _dispatcher, configError);
         _window = new MainWindow(viewModel);
 
         // Reminders → toasts (task 8.2). Handlers are attached before Register, as the SDK requires.
@@ -93,6 +102,14 @@ public partial class App : Application
                 _window?.ShowFromTray();
                 break;
         }
+    }
+
+    /// <summary>Restarts the app (after a theme change). The tray icon is removed first.</summary>
+    public void Restart()
+    {
+        _reminders?.Dispose();
+        ReminderNotifier.Unregister();
+        AppInstance.Restart("");
     }
 
     /// <summary>Called by the tray menu "Thoát": the only real exit (closing the window hides it).</summary>

@@ -6,6 +6,7 @@ using Calendar.Core.Layout;
 using Calendar.Core.Models;
 using Calendar.Core.Providers;
 using Calendar.Core.Reminders;
+using Calendar.Core.Settings;
 using Calendar.Core.Storage;
 using Calendar.Core.Sync;
 using Calendar.Providers.Google;
@@ -28,11 +29,7 @@ public sealed class ReauthPromptViewModel(Account account, IAsyncRelayCommand si
 public sealed partial class ShellViewModel : ObservableObject
 {
     private static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(5);
-    public static readonly TimeSpan SyncInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan SyncOnFocusMinAge = TimeSpan.FromMinutes(1);
-
-    /// <summary>TODO(Phase 9): read from settings.</summary>
-    private static readonly DayOfWeek FirstDayOfWeek = DayOfWeek.Monday;
 
     private readonly ICalendarStore _store;
     private readonly SyncEngine _engine;
@@ -41,13 +38,17 @@ public sealed partial class ShellViewModel : ObservableObject
     private readonly SyncCoordinator _sync;
     private readonly DispatcherQueue _dispatcher;
     private readonly string? _configError;
+    private readonly SettingsStore _settingsStore;
     private int _reloadVersion;
     private bool _initialized;
     private int _handledRuns;
 
     public ShellViewModel(ICalendarStore store, SyncEngine engine, EventEditor editor, SyncCoordinator sync,
-        ReminderScheduler reminders, DispatcherQueue dispatcher, string? configError)
+        ReminderScheduler reminders, SettingsStore settingsStore, AppSettings settings, DispatcherQueue dispatcher,
+        string? configError)
     {
+        _settingsStore = settingsStore;
+        Settings = settings;
         _store = store;
         _engine = engine;
         _editor = editor;
@@ -59,6 +60,54 @@ public sealed partial class ShellViewModel : ObservableObject
         UpdateVisibleRange();
         _sync.StateChanged += (_, _) => _dispatcher.TryEnqueue(() => _ = OnSyncStateChangedAsync());
     }
+
+    // ---- Settings (Phase 9) -----------------------------------------------------------------
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FirstDayOfWeek), nameof(WorkDayStart), nameof(WorkDayEnd), nameof(DefaultCalendar))]
+    public partial AppSettings Settings { get; set; }
+
+    public DayOfWeek FirstDayOfWeek => Settings.FirstDayOfWeek;
+    public TimeSpan WorkDayStart => Settings.WorkDayStart.ToTimeSpan();
+    public TimeSpan WorkDayEnd => Settings.WorkDayEnd.ToTimeSpan();
+
+    /// <summary>Saves and applies new settings (theme only takes effect after a restart).</summary>
+    public async Task SaveSettingsAsync(AppSettings settings)
+    {
+        try
+        {
+            await _settingsStore.SaveAsync(settings);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(InfoBarSeverity.Error, $"Không lưu được cài đặt: {ex.Message}");
+            return;
+        }
+        var intervalChanged = settings.SyncIntervalMinutes != Settings.SyncIntervalMinutes;
+        Settings = settings;
+        if (intervalChanged && _initialized)
+            _sync.Start(TimeSpan.FromMinutes(settings.SyncIntervalMinutes));
+    }
+
+    partial void OnSettingsChanged(AppSettings value)
+    {
+        // The constructor sets Settings before SelectedDate; the range is computed once both exist.
+        if (SelectedDate != default)
+            UpdateVisibleRange();
+    }
+
+    /// <summary>A new event with the reminder chosen in settings.</summary>
+    public EventDraft NewDraft(string title, DateTimeOffset start, DateTimeOffset end, bool isAllDay) => new()
+    {
+        Title = title,
+        Start = start,
+        End = end,
+        IsAllDay = isAllDay,
+        UseDefaultReminders = Settings.UseCalendarDefaultReminders,
+        Reminders = Settings.UseCalendarDefaultReminders || Settings.DefaultReminderMinutes is not { } m
+            ? Array.Empty<Reminder>()
+            : new[] { new Reminder(m) },
+    };
 
     // ---- State ------------------------------------------------------------------------------
 
@@ -127,9 +176,13 @@ public sealed partial class ShellViewModel : ObservableObject
     private IReadOnlyList<CalendarChoice> _allCalendars = [];
     private CalendarChoice? _lastUsedCalendar;
 
-    /// <summary>Calendar preselected for a new event: the last one used, else the first primary calendar.</summary>
+    /// <summary>Calendar preselected for a new event: the one chosen in settings, else the last one used,
+    /// else the first primary calendar.</summary>
     public CalendarChoice? DefaultCalendar =>
-        WritableCalendars.FirstOrDefault(c => _lastUsedCalendar is { } last
+        WritableCalendars.FirstOrDefault(c => Settings.DefaultCalendar is { } chosen
+                                              && c.Calendar.AccountId == chosen.AccountId
+                                              && c.Calendar.Id == chosen.CalendarId)
+        ?? WritableCalendars.FirstOrDefault(c => _lastUsedCalendar is { } last
                                               && c.Calendar.AccountId == last.Calendar.AccountId
                                               && c.Calendar.Id == last.Calendar.Id)
         ?? WritableCalendars.FirstOrDefault(c => c.Calendar.IsPrimary)
@@ -188,7 +241,7 @@ public sealed partial class ShellViewModel : ObservableObject
         if (HasNoAccounts && _configError is null)
             ShowMessage(InfoBarSeverity.Informational, "Bấm \"Thêm tài khoản\" để đăng nhập Google.");
 
-        _sync.Start(SyncInterval);
+        _sync.Start(TimeSpan.FromMinutes(Settings.SyncIntervalMinutes));
         if (!HasNoAccounts)
             _ = _sync.SyncNowAsync();
     }

@@ -10,6 +10,13 @@ public sealed class EventClickedEventArgs(CalendarEvent ev, FrameworkElement anc
     public FrameworkElement Anchor { get; } = anchor;
 }
 
+/// <summary>An event block was dragged to a new start (same duration).</summary>
+public sealed class EventMovedEventArgs(CalendarEvent ev, DateTimeOffset newStart) : EventArgs
+{
+    public CalendarEvent Event { get; } = ev;
+    public DateTimeOffset NewStart { get; } = newStart;
+}
+
 /// <summary>
 /// Empty space was clicked or dragged over: a new event could go there. For all-day slots,
 /// Start/End follow the floating all-day convention of <see cref="CalendarEvent"/>.

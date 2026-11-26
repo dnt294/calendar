@@ -41,7 +41,10 @@ public sealed partial class MainWindow : Window
                 ShowViewMode(ViewModel.ViewMode);
             else if (e.PropertyName == nameof(ShellViewModel.SelectedDate))
                 ShowSelectedDate(ViewModel.SelectedDate);
+            else if (e.PropertyName == nameof(ShellViewModel.FirstDayOfWeek))
+                MiniCalendar.FirstDayOfWeek = (Windows.Globalization.DayOfWeek)(int)ViewModel.FirstDayOfWeek;
         };
+        MiniCalendar.FirstDayOfWeek = (Windows.Globalization.DayOfWeek)(int)ViewModel.FirstDayOfWeek;
         ShowSelectedDate(ViewModel.SelectedDate);
 
         AddShortcuts();
@@ -232,7 +235,7 @@ public sealed partial class MainWindow : Window
         }
 
         var flyout = new Flyout();
-        EventDraft Draft(string title) => new() { Title = title, Start = e.Start, End = e.End, IsAllDay = e.IsAllDay };
+        EventDraft Draft(string title) => ViewModel.NewDraft(title, e.Start, e.End, e.IsAllDay);
         flyout.Content = new QuickCreatePanel(e.Start, e.End, e.IsAllDay, ViewModel.WritableCalendars, ViewModel.DefaultCalendar,
             onSave: (title, calendar) =>
             {
@@ -246,6 +249,37 @@ public sealed partial class MainWindow : Window
             });
         flyout.Closed += (_, _) => TimeGrid.ClearSelection();
         flyout.ShowAt(e.Anchor, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Auto });
+    }
+
+    /// <summary>Drag &amp; drop (Phase 9): same duration at the new time; only this occurrence for a recurring event.</summary>
+    private async void OnEventMoved(object? sender, EventMovedEventArgs e)
+    {
+        var ev = e.Event;
+        if (!ViewModel.CanWrite)
+        {
+            ViewModel.ExplainWriteDisabled();
+            return;
+        }
+        if (ViewModel.CalendarOf(ev)?.Calendar.CanEdit != true)
+        {
+            ViewModel.ShowInfo("Lịch này chỉ đọc, không dời được sự kiện.");
+            return;
+        }
+        if (ev.Attendees.Any(a => !a.IsSelf))
+        {
+            var confirm = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "Dời sự kiện có khách mời?",
+                Content = $"Dời \"{ev.Title}\" sang {EventText.When(e.NewStart, e.NewStart + (ev.End - ev.Start), false)}.\nKhách mời sẽ nhận email cập nhật.",
+                PrimaryButtonText = "Dời",
+                CloseButtonText = "Huỷ",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+            if (!await ShowDialogAsync(confirm))
+                return;
+        }
+        await ViewModel.UpdateEventAsync(ev, EventDraft.MovedTo(ev, e.NewStart));
     }
 
     private void OnNewEventClick(object sender, RoutedEventArgs e) => _ = NewEventAsync();
@@ -262,13 +296,13 @@ public sealed partial class MainWindow : Window
         var start = ViewModel.SelectedDate == DateOnly.FromDateTime(next.DateTime)
             ? next
             : LocalTime.At(ViewModel.SelectedDate, TimeSpan.FromHours(9));
-        return CreateWithEditorAsync(new EventDraft { Title = "", Start = start, End = start.AddHours(1) }, ViewModel.DefaultCalendar);
+        return CreateWithEditorAsync(ViewModel.NewDraft("", start, start.AddHours(1), false), ViewModel.DefaultCalendar);
     }
 
     private async Task CreateWithEditorAsync(EventDraft draft, CalendarChoice? calendar)
     {
         var dialog = new EventEditorDialog(Content.XamlRoot, "Sự kiện mới", draft, ViewModel.WritableCalendars,
-            calendar ?? ViewModel.DefaultCalendar, calendarLocked: false, note: null);
+            calendar ?? ViewModel.DefaultCalendar, calendarLocked: false, note: null, ViewModel.FirstDayOfWeek);
         if (await ShowDialogAsync(dialog) && dialog.Result is { } result && dialog.SelectedCalendar is { } chosen)
             await ViewModel.CreateEventAsync(chosen, result);
     }
@@ -280,7 +314,8 @@ public sealed partial class MainWindow : Window
             ? $"Sự kiện lặp: chỉ sửa lần này ({ev.Start.ToLocalTime().ToString("D", System.Globalization.CultureInfo.CurrentCulture)})."
             : null;
         var dialog = new EventEditorDialog(Content.XamlRoot, "Sửa sự kiện", EventDraft.FromEvent(ev),
-            calendar is null ? Array.Empty<CalendarChoice>() : new[] { calendar }, calendar, calendarLocked: true, note);
+            calendar is null ? Array.Empty<CalendarChoice>() : new[] { calendar }, calendar, calendarLocked: true, note,
+            ViewModel.FirstDayOfWeek);
         if (await ShowDialogAsync(dialog) && dialog.Result is { } result)
             await ViewModel.UpdateEventAsync(ev, result);
     }
@@ -305,6 +340,59 @@ public sealed partial class MainWindow : Window
         };
         if (await ShowDialogAsync(dialog))
             await ViewModel.DeleteEventAsync(ev);
+    }
+
+    // ---- Settings (Phase 9) ----------------------------------------------------------------
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e) => _ = OpenSettingsAsync();
+
+    private async Task OpenSettingsAsync()
+    {
+        bool startupEnabled = false, startupAvailable = true;
+        try
+        {
+            startupEnabled = await StartupService.IsEnabledAsync();
+        }
+        catch (Exception)
+        {
+            startupAvailable = false;
+        }
+
+        var before = ViewModel.Settings;
+        var dialog = new SettingsDialog(Content.XamlRoot, before, ViewModel.WritableCalendars, startupEnabled, startupAvailable);
+        if (!await ShowDialogAsync(dialog) || dialog.Result is not { } result)
+            return;
+
+        await ViewModel.SaveSettingsAsync(result);
+
+        if (startupAvailable && dialog.StartupEnabled != startupEnabled)
+        {
+            var (enabled, problem) = await StartupService.SetEnabledAsync(dialog.StartupEnabled);
+            if (_startupItem is not null)
+                _startupItem.IsChecked = enabled;
+            if (problem is not null)
+                ViewModel.ShowInfo(problem);
+        }
+
+        if (result.Theme != before.Theme)
+        {
+            var restart = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = "Đổi giao diện",
+                Content = "Giao diện mới sẽ áp dụng khi mở lại app. Mở lại ngay?",
+                PrimaryButtonText = "Mở lại ngay",
+                CloseButtonText = "Để sau",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+            if (await ShowDialogAsync(restart))
+            {
+                _exiting = true;
+                _minuteTimer.Stop();
+                _tray?.Dispose();
+                ((App)Application.Current).Restart();
+            }
+        }
     }
 
     /// <summary>Only one ContentDialog may be open at a time; a second request is ignored.</summary>
@@ -334,6 +422,15 @@ public sealed partial class MainWindow : Window
         Add(VirtualKey.Left, arrowKey: true, () => ViewModel.PreviousCommand.Execute(null));
         Add(VirtualKey.Right, arrowKey: true, () => ViewModel.NextCommand.Execute(null));
         Add(VirtualKey.N, arrowKey: false, () => _ = NewEventAsync());
+
+        // Ctrl+, opens the settings (VirtualKey has no name for the comma key: 188 = VK_OEM_COMMA).
+        var settings = new KeyboardAccelerator { Key = (VirtualKey)188, Modifiers = VirtualKeyModifiers.Control };
+        settings.Invoked += (sender, args) =>
+        {
+            args.Handled = true;
+            _ = OpenSettingsAsync();
+        };
+        ((UIElement)Content).KeyboardAccelerators.Add(settings);
 
         void Add(VirtualKey key, bool arrowKey, Action action)
         {

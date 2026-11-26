@@ -280,6 +280,16 @@
                                 Command="{x:Bind ViewModel.AddAccountCancelCommand}"
                                 Visibility="{x:Bind ViewModel.AddAccountCommand.IsRunning, Mode=OneWay}" />
 
+                        <Button Click="OnSettingsClick"
+                                AutomationProperties.Name="Cài đặt"
+                                Style="{StaticResource SubtleButtonStyle}"
+                                ToolTipService.ToolTip="Cài đặt (Ctrl+,)">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE713;" FontSize="14" />
+                                <TextBlock Text="Cài đặt" />
+                            </StackPanel>
+                        </Button>
+
                         <!-- Sync status: ● Online / ⚠ Offline · last update. -->
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xEA3B;" FontSize="10"
@@ -303,13 +313,17 @@
                                    Visibility="{x:Bind ViewModel.IsTimeGridView, Mode=OneWay}"
                                    StartDate="{x:Bind ViewModel.StartDate, Mode=OneWay}"
                                    Days="{x:Bind ViewModel.Days, Mode=OneWay}"
+                                   WorkDayStart="{x:Bind ViewModel.WorkDayStart, Mode=OneWay}"
+                                   WorkDayEnd="{x:Bind ViewModel.WorkDayEnd, Mode=OneWay}"
                                    Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
                                    Events="{x:Bind ViewModel.Events, Mode=OneWay}"
                                    EventClicked="OnEventClicked"
-                                   SlotSelected="OnSlotSelected" />
+                                   SlotSelected="OnSlotSelected"
+                                   EventMoved="OnEventMoved" />
                 <!-- Scrolls continuously through months; reports the month in view back to the view model. -->
                 <controls:MonthGrid Visibility="{x:Bind ViewModel.IsMonthView, Mode=OneWay}"
                                     DisplayMonth="{x:Bind ViewModel.SelectedDate, Mode=OneWay}"
+                                    FirstDayOfWeek="{x:Bind ViewModel.FirstDayOfWeek, Mode=OneWay}"
                                     Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
                                     Events="{x:Bind ViewModel.Events, Mode=OneWay}"
                                     DayRequested="OnMonthDayRequested"
