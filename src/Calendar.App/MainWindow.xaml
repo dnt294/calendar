@@ -12,6 +12,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -51,23 +52,35 @@
             </TitleBar.Content>
 
             <TitleBar.RightHeader>
-                <!-- TODO(2.1): wire to Google sign-in. -->
-                <Button IsEnabled="False"
-                        Margin="0,0,8,0"
-                        ToolTipService.ToolTip="Đăng nhập Google sẽ có ở task 2.1">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE8FA;" FontSize="14" />
-                        <TextBlock Text="Thêm tài khoản" />
-                    </StackPanel>
-                </Button>
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,8,0" VerticalAlignment="Center">
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}"
+                                  Width="18" Height="18" />
+                    <Button Content="Huỷ"
+                            Command="{x:Bind ViewModel.AddAccountCancelCommand}"
+                            Visibility="{x:Bind ViewModel.AddAccountCommand.IsRunning, Mode=OneWay}" />
+                    <Button Command="{x:Bind ViewModel.AddAccountCommand}"
+                            IsEnabled="{x:Bind ViewModel.IsIdle, Mode=OneWay}"
+                            ToolTipService.ToolTip="Đăng nhập tài khoản Google">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE8FA;" FontSize="14" />
+                            <TextBlock Text="Thêm tài khoản" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </TitleBar.RightHeader>
         </TitleBar>
 
-        <controls:WeekGrid Grid.Row="1"
+        <InfoBar Grid.Row="1"
+                 Margin="8,0,8,4"
+                 IsOpen="{x:Bind ViewModel.IsMessageOpen, Mode=TwoWay}"
+                 Severity="{x:Bind ViewModel.MessageSeverity, Mode=OneWay}"
+                 Message="{x:Bind ViewModel.Message, Mode=OneWay}" />
+
+        <controls:WeekGrid Grid.Row="2"
                            Margin="8,0,8,0"
                            StartDate="{x:Bind ViewModel.StartDate, Mode=OneWay}"
                            Days="{x:Bind ViewModel.Days}"
-                           Calendars="{x:Bind ViewModel.Calendars}"
+                           Calendars="{x:Bind ViewModel.Calendars, Mode=OneWay}"
                            Events="{x:Bind ViewModel.Events, Mode=OneWay}" />
     </Grid>
 </Window>

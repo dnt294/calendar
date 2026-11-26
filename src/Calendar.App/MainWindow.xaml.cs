@@ -5,10 +5,11 @@ namespace Calendar.App;
 
 public sealed partial class MainWindow : Window
 {
-    public ShellViewModel ViewModel { get; } = new();
+    public ShellViewModel ViewModel { get; }
 
-    public MainWindow()
+    public MainWindow(ShellViewModel viewModel)
     {
+        ViewModel = viewModel;
         InitializeComponent();
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);

@@ -4,7 +4,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 0 — Chuẩn bị & spike auth (làm trước tiên, ~1 buổi)
 
-- [ ] **0.1 Đăng ký Google OAuth** theo [setup-oauth.md](setup-oauth.md): project, bật Calendar API, consent screen External → **In production**, client loại *Desktop app*.
+- [x] **0.1 Đăng ký Google OAuth** theo [setup-oauth.md](setup-oauth.md): project, bật Calendar API, consent screen External → **In production**, client loại *Desktop app*.
 - [ ] **0.2 Đăng ký Azure app** theo [setup-oauth.md](setup-oauth.md): *personal + work accounts*, public client, redirect cho WAM.
 - [ ] **0.3 Spike console** (`spikes/AuthSpike`, xoá sau): login + list 10 event sắp tới cho **cả 3 account** (Gmail, Workspace, Outlook.com).
   - Xong khi: cả 3 in ra event. Nếu Workspace bị chặn → dừng, xử lý với admin trước khi đi tiếp.
@@ -18,7 +18,7 @@ Nguyên tắc: mỗi task là một lát dọc chạy được, có tiêu chí "
 
 ## Phase 2 — Lát dọc đầu tiên: 1 Google account, xem tuần (~2–3 buổi)
 
-- [ ] **2.1** Google provider: sign-in (token DPAPI), `GetCalendarsAsync`, `SyncEventsAsync` full sync (`singleEvents=true`).
+- [x] **2.1** Google provider: sign-in (token DPAPI), `GetCalendarsAsync`, `SyncEventsAsync` full sync (`singleEvents=true`).
 - [x] **2.2** `DayLayout`: xếp cột event chồng giờ — **viết test trước** (chồng 2, 3, lồng nhau, liền kề không chồng).
 - [x] **2.3** `WeekGrid` control: trục giờ, 7 cột, dải cả ngày, đường giờ hiện tại, cuộn tới 8:00.
 - [x] **2.4** Shell: title bar Mica, header (Today, ‹ ›, nhãn ngày), nút thêm tài khoản.
