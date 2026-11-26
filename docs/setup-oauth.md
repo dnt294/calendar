@@ -6,7 +6,8 @@
 2. *APIs & Services → Library* → bật **Google Calendar API**.
 3. *OAuth consent screen* (Google Auth Platform):
    - User type: **External**.
-   - Thêm scope `https://www.googleapis.com/auth/calendar`.
+   - **Branding**: App name, User support email, **App home page** = `https://github.com/dnt294/calendar`, **Privacy policy link** = `https://github.com/dnt294/calendar/blob/main/PRIVACY.md` (repo public), Developer contact email. Thiếu homepage / privacy policy thì Google không cho publish.
+   - **Data Access**: thêm scope `https://www.googleapis.com/auth/calendar`.
    - **Publishing status → In production** (bấm *Publish app*), **không** submit verification.
      - Lý do: ở trạng thái *Testing*, refresh token hết hạn sau 7 ngày.
      - Đổi lại: lúc login sẽ có màn hình "Google hasn't verified this app" → *Advanced → Go to … (unsafe)*. Giới hạn 100 user — đủ cho cá nhân.
